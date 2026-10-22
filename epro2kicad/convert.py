@@ -362,6 +362,7 @@ def fetch_models(proj: Project, b: Board, fp_names: dict, out: str, lib: str, lo
     model of the part's LCSC number, if its footprint has the same pads (EasyEDA centres models on the footprint)."""
     from .lcsc import LcscError, fetch_step, find_model, model_from_transform, step_extent
     placed = []  # (footprint uuid, device attributes); a PCB component's own footprint wins over its device's
+    overrides = []  # (component id, footprint uuid, device attributes, the instance's own 3D model attributes)
     if b.pcb:
         comps: dict[str, dict] = {}
         for a in proj.pcbs[b.pcb].of("ATTR"):
@@ -369,7 +370,12 @@ def fetch_models(proj: Project, b: Board, fp_names: dict, out: str, lib: str, lo
         for c in proj.pcbs[b.pcb].of("COMPONENT"):
             at = comps.get(c.id, {})
             dev = proj.devices.get(at.get("Device") or "", {}).get("attributes") or {}
-            placed.append((at.get("Footprint") or str(dev.get("Footprint") or ""), dev))
+            fu = at.get("Footprint") or str(dev.get("Footprint") or "")
+            placed.append((fu, dev))
+            own = {k: str(v) for k, v in (c.d.get("attrs") or {}).items()
+                   if k in ("3D Model", "3D Model Title", "3D Model Transform") and v}
+            if any(own.get(k) != str(dev.get(k) or "") for k in own):
+                overrides.append((c.id, fu, dev, own))
     else:
         placed = [(str((d.get("attributes") or {}).get("Footprint") or ""), d.get("attributes") or {})
                   for d in proj.devices.values()]
@@ -391,29 +397,67 @@ def fetch_models(proj: Project, b: Board, fp_names: dict, out: str, lib: str, lo
     models, failed, notes = {}, 0, []
     shapes = os.path.join(out, f"{lib}.3dshapes")
     todo = sorted((fu, c) for fu, c in wanted.items() if c and fp_names.get(fu))
-    for n, (fu, cands) in enumerate(todo):
-        step("3d", f"Downloading 3D models {n + 1}/{len(todo)}", n / len(todo))
-        name = fp_names[fu]
+
+    def resolve(cands):
         for cand in cands:
             try:
                 mu, tr, note = cand()
-                data = fetch_step({"3D Model": mu})
+                return tr, note, fetch_step({"3D Model": mu})
             except (LcscError, ValueError, OSError):
                 continue
+        return None
+
+    # the lookups are independent web requests: run them side by side
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(8) as pool:
+        for n, ((fu, _), got) in enumerate(zip(todo, pool.map(lambda t: resolve(t[1]), todo))):
+            step("3d", f"Downloading 3D models {n + 1}/{len(todo)}", n / len(todo))
+            if got is None:
+                failed += 1
+                continue
+            tr, note, data = got
+            name = fp_names[fu]
             os.makedirs(shapes, exist_ok=True)
             with open(os.path.join(shapes, f"{name}.step"), "wb") as f:
                 f.write(data)
             models[fu] = model_from_transform(f"${{KIPRJMOD}}/{lib}.3dshapes/{name}.step", tr, step_extent(data))
             if note:
                 notes.append(f"{name}: {note}")
-            break
-        else:
+    # components with their own model or transform (instance attributes override the device's)
+    for cid, fu, dev, own in overrides:
+        name = fp_names.get(fu)
+        if not name or fu not in proj.footprints:
+            continue
+        mu = own.get("3D Model") or str(dev.get("3D Model") or "")
+        title = own.get("3D Model Title") or str(dev.get("3D Model Title") or "")
+        tr = own.get("3D Model Transform") or str(dev.get("3D Model Transform") or "")
+        same = mu == str(dev.get("3D Model") or "") and fu in models
+        path = os.path.join(shapes, f"{name}.step" if same else f"{name}__{cid}.step")
+        try:
+            if same:
+                with open(path, "rb") as f:
+                    data = f.read()
+            else:
+                try:
+                    data = fetch_step({"3D Model": mu})
+                except (LcscError, ValueError, OSError):
+                    if not title:
+                        raise
+                    data = fetch_step({"3D Model": find_model(title)})
+                os.makedirs(shapes, exist_ok=True)
+                with open(path, "wb") as f:
+                    f.write(data)
+        except (LcscError, ValueError, OSError):
             failed += 1
+            continue
+        models[f"comp:{cid}"] = model_from_transform(f"${{KIPRJMOD}}/{lib}.3dshapes/{os.path.basename(path)}", tr,
+                                                     step_extent(data))
     log(f"  3D models: {len(models)} added" + (f" ({len(notes)} replaced by the library's current one)" if notes
                                                 else "") + (f", {failed} not available" if failed else ""))
     if notes:
-        rep.warnings.append("3D models no longer in the EasyEDA library under the project's ids, replaced: "
-                            + "; ".join(notes))
+        by_name = sum(1 for x in notes if "found by name" in x)
+        rep.warnings.append(f"{len(notes)} 3D model(s) linked to the EasyEDA library's current version (the project's "
+                            f"ids are gone): {by_name} by model name, {len(notes) - by_name} by LCSC number")
     if failed:
         rep.warnings.append(f"{failed} 3D model(s) could not be downloaded from the EasyEDA library")
     return models

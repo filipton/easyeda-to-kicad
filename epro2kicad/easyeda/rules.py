@@ -89,6 +89,10 @@ class Rules:
     copper: dict = field(default_factory=dict)  # name -> CopperRule
     plane: dict = field(default_factory=dict)  # name -> CopperRule
     diff: dict = field(default_factory=dict)  # name -> (width, gap)
+    # name -> (min width, default width, max width, min gap, length tolerance or None)
+    diff_full: dict = field(default_factory=dict)
+    net_length: dict = field(default_factory=dict)  # name -> (min, max), 0 = no limit
+    blind: dict = field(default_factory=dict)  # blind / buried via rule name -> (start layer id, end layer id)
     defaults: dict = field(default_factory=dict)  # type -> name
     hole_to_hole: float | None = None
     mask: float = 2.0
@@ -99,6 +103,8 @@ class Rules:
     class_rules: dict = field(default_factory=dict)  # netclass -> {type: name}
     pour_rules: dict = field(default_factory=dict)  # pour id -> {type: name}
     region_rules: dict = field(default_factory=dict)  # region id -> {type: name}
+    pair_rules: dict = field(default_factory=dict)  # differential pair name -> {type: name}
+    eqlen_rules: dict = field(default_factory=dict)  # equal-length group name -> {type: name}
     pour_safe: dict = field(default_factory=dict)  # pour id -> SAFE profile name used for the pour (v3)
 
     def default(self, typ: str):
@@ -176,6 +182,16 @@ def parse_rules(recs) -> Rules:
                 w = _v3_first(ctx, "stroWidth")
                 s = _v3_first(ctx, "spacing")
                 R.diff[name] = (_mil(w.get("stroDef"), unit), _mil(s.get("spacDef"), unit))
+                tol = ctx.get("differPairLenTolerMax")
+                R.diff_full[name] = (_mil(w.get("stroMin"), unit), _mil(w.get("stroDef"), unit),
+                                     _mil(w.get("stroMax"), unit), _mil(s.get("spacMin"), unit),
+                                     _mil(tol, unit) if tol else None)
+            elif typ == "BLIND":
+                for b in ((ctx.get("blinds") or {}).get("content") or []):
+                    if isinstance(b, dict) and b.get("name") and b.get("staLayerId") is not None:
+                        R.blind[str(b["name"])] = (int(b["staLayerId"]), int(b.get("endLayerId") or 0))
+            elif typ == "NET_LENGTH":
+                R.net_length[name] = (_mil(ctx.get("netLenMin") or 0, unit), _mil(ctx.get("netLenMax") or 0, unit))
             elif typ == "OTHER":
                 if ctx.get("holeClearance"):
                     R.hole_to_hole = _mil(ctx.get("holeClearance"), unit)
@@ -210,6 +226,12 @@ def parse_rules(recs) -> Rules:
                     R.plane[name] = CopperRule(th, th, clearance=float(v[0]) if v[0] is not None else None)
             elif typ == "DIFFER_ENTAIL" and len(vals) >= 4:
                 R.diff[name] = (_mil(vals[1], unit), _mil(vals[3], unit))
+                # [width min, def, max, gap min, gap def, -, length tolerance]
+                v = list(vals) + [None] * 7
+                R.diff_full[name] = (_mil(v[0], unit), _mil(v[1], unit), _mil(v[2], unit), _mil(v[3], unit),
+                                     _mil(v[6], unit) if v[6] else None)
+            elif typ == "NET_LENGTH" and len(vals) >= 2:
+                R.net_length[name] = (_mil(vals[0] or 0, unit), _mil(vals[1] or 0, unit))
             elif typ == "OTHER":
                 if len(vals) >= 3 and vals[2]:
                     R.hole_to_hole = _mil(vals[2], unit)
@@ -249,4 +271,8 @@ def parse_rules(recs) -> Rules:
             R.pour_rules[key] = rules
         elif kind == "REGION":
             R.region_rules[key] = rules
+        elif kind == "DIFF_PAIR":
+            R.pair_rules[key] = rules
+        elif kind == "EQ_LEN_GRP":
+            R.eqlen_rules[key] = rules
     return R

@@ -13,6 +13,7 @@ DOCUMENT, MECHANICAL = 13, 14
 HOLE = 47
 COMP_SHAPE, COMP_MARKING, PIN_SOLDERING, PIN_FLOATING = 48, 49, 50, 51
 INNER_FIRST, INNER_LAST = 15, 44
+FIRST_CUSTOM_USER = 5  # User.1 is spare, User.2-4 hold the 3D shell layers
 
 # Non copper layers (front variant).  None = dropped.
 _FIXED = {
@@ -31,13 +32,15 @@ _FIXED = {
     COMP_MARKING: "F.Fab",
     PIN_SOLDERING: None,
     PIN_FLOATING: None,
-    52: None,  # ratline
+    52: None,  # component model
     53: "User.2",  # 3D shell outline
     54: "User.3",  # 3D shell top
     55: "User.4",  # 3D shell bottom
     56: None,  # drill drawing
-    57: "Eco2.User",  # stiffener / others
+    57: None,  # ratline
 }
+# layers that get a named KiCad user layer when the board uses them: stiffeners (58, 59) and custom layers
+NAMED_USER = {58, 59} | set(range(71, 101))
 
 FLIP = {
     "F.Cu": "B.Cu", "B.Cu": "F.Cu",
@@ -64,10 +67,15 @@ for _i in range(1, 31):
 class LayerMap:
     """Maps EasyEDA layer ids of one board onto a native KiCad layer stack."""
 
-    def __init__(self, inner_ids: list[int] | None = None):
+    def __init__(self, inner_ids: list[int] | None = None, custom: dict[int, str] | None = None):
+        """`custom`: EasyEDA custom layer id -> its name; each gets a named KiCad user layer (User.5 on)."""
         self.inner = {}
         for k, lid in enumerate(sorted(inner_ids or [])):
             self.inner[lid] = f"In{k + 1}.Cu"
+        self.user = {}  # EasyEDA id -> (KiCad layer, name)
+        for k, (lid, name) in enumerate(sorted((custom or {}).items())):
+            if FIRST_CUSTOM_USER + k <= 45:
+                self.user[lid] = (f"User.{FIRST_CUSTOM_USER + k}", name)
 
     @property
     def copper_count(self) -> int:
@@ -86,6 +94,8 @@ class LayerMap:
             return c
         if INNER_FIRST <= lid <= INNER_LAST:
             return None  # inner layer not enabled on this board
+        if lid in self.user:
+            return self.user[lid][0]
         return _FIXED.get(lid, "Cmts.User")
 
     def copper_layers(self) -> list[str]:
@@ -134,4 +144,5 @@ def board_layers_table(lm: LayerMap, inner_types: dict[str, str] | None = None) 
         [43, "User.3", Sym("user")],
         [45, "User.4", Sym("user")],
     ]
+    rows += [[_ORD[kl], kl, Sym("user"), name] for kl, name in sorted(lm.user.values(), key=lambda v: _ORD[v[0]])]
     return [Sym("layers")] + rows

@@ -129,6 +129,10 @@ class Pad:
     pinfunction: str | None = None
     pintype: str | None = None
     src_id: str = ""
+    prop: str | None = None  # KiCad fabrication property, e.g. pad_prop_testpoint
+    thermal_angle: float | None = None
+    unused_inner: list | None = None  # EasyEDA ids of inner layers without a ring (unusedInnerLayers)
+    stack: dict = field(default_factory=dict)  # "Inner" / "B.Cu" -> (shape, size, rratio, primitives)
 
     def flipped(self) -> "Pad":
         p = Pad(**{k: (list(v) if isinstance(v, list) else v) for k, v in self.__dict__.items()})
@@ -137,6 +141,13 @@ class Pad:
         p.layers = [L.flip_layer(x) for x in self.layers]
         p.drill_offset = (self.drill_offset[0], -self.drill_offset[1])
         p.primitives = [[(x, -y) for x, y in poly] for poly in self.primitives]
+        if self.stack:  # front and back swap sides
+            st = {k: (v[0], v[1], v[2], [[(x, -y) for x, y in poly] for poly in v[3]]) for k, v in self.stack.items()}
+            front = (self.shape, self.size, self.rratio, p.primitives)
+            back = st.pop("B.Cu", front)
+            p.shape, p.size, p.rratio, p.primitives = back
+            st["B.Cu"] = front
+            p.stack = st
         return p
 
     def extent_pts(self):
@@ -292,6 +303,14 @@ def graphic_sexp(g: Graphic, uid: str | None, prefix: str = "fp_") -> list:
     return n
 
 
+def _primitives(polys: list) -> list:
+    prims = [Sym("primitives")]
+    for poly in polys:
+        prims.append([Sym("gr_poly"), [Sym("pts")] + [[Sym("xy"), rnd(x), rnd(y)] for x, y in poly],
+                      [Sym("width"), 0], [Sym("fill"), YES]])
+    return prims
+
+
 def pad_sexp(p: Pad, angle_abs: float, uid: str | None, with_net: bool) -> list:
     n = [Sym("pad"), p.number, Sym(p.kind), Sym(p.shape), _at(p.at, angle_abs),
          [Sym("size"), rnd(max(p.size[0], 0.001)), rnd(max(p.size[1], 0.001))]]
@@ -306,8 +325,14 @@ def pad_sexp(p: Pad, angle_abs: float, uid: str | None, with_net: bool) -> list:
             d.append([Sym("offset"), rnd(p.drill_offset[0]), rnd(p.drill_offset[1])])
         n.append(d)
     n.append([Sym("layers")] + list(p.layers))
+    if p.prop:
+        n.append([Sym("property"), Sym(p.prop)])
     if p.kind == "thru_hole":
-        n.append([Sym("remove_unused_layers"), NO])
+        if p.unused_inner:
+            # EasyEDA hides the rings on unconnected inner layers; KiCad works out the same itself
+            n += [[Sym("remove_unused_layers"), YES], [Sym("keep_end_layers"), YES]]
+        else:
+            n.append([Sym("remove_unused_layers"), NO])
     if p.shape == "roundrect":
         n.append([Sym("roundrect_rratio"), rnd(p.rratio, 4)])
     if with_net and p.net:
@@ -326,18 +351,30 @@ def pad_sexp(p: Pad, angle_abs: float, uid: str | None, with_net: bool) -> list:
         n.append([Sym("thermal_bridge_width"), rnd(p.thermal_width, 4)])
     if p.thermal_gap is not None:
         n.append([Sym("thermal_gap"), rnd(p.thermal_gap, 4)])
-    if p.shape in ("circle", "custom"):
+    if p.thermal_angle is not None:
+        n.append([Sym("thermal_bridge_angle"), rnd(p.thermal_angle, 4)])
+    elif p.shape in ("circle", "custom"):
         # KiCad's default spokes for round pads are diagonal; EasyEDA's are straight (between BGA balls only a
         # straight spoke fits, without it the pour there becomes an island and is removed)
         # shortcut: always 90 deg, the rule's own angle (COPPER spoAng) is 90 in every project seen so far
         n.append([Sym("thermal_bridge_angle"), 90])
     if p.shape == "custom":
         n.append([Sym("options"), [Sym("clearance"), Sym("outline")], [Sym("anchor"), Sym("circle")]])
-        prims = [Sym("primitives")]
-        for poly in p.primitives:
-            prims.append([Sym("gr_poly"), [Sym("pts")] + [[Sym("xy"), rnd(x), rnd(y)] for x, y in poly],
-                          [Sym("width"), 0], [Sym("fill"), YES]])
-        n.append(prims)
+        n.append(_primitives(p.primitives))
+    if p.stack:
+        # EasyEDA's special pads (another shape on some copper layers) as KiCad's front / inner / back padstack
+        front = (p.shape, p.size, p.rratio, p.primitives)
+        st = [Sym("padstack"), [Sym("mode"), Sym("front_inner_back")]]
+        for key in ("Inner", "B.Cu"):
+            shape, size, rratio, prims = p.stack.get(key, front)
+            ly = [Sym("layer"), key, [Sym("shape"), Sym(shape)],
+                  [Sym("size"), rnd(max(size[0], 0.001)), rnd(max(size[1], 0.001))]]
+            if shape == "roundrect":
+                ly.append([Sym("roundrect_rratio"), rnd(rratio, 4)])
+            if shape == "custom":
+                ly += [[Sym("options"), [Sym("anchor"), Sym("circle")]], _primitives(prims)]
+            st.append(ly)
+        n.append(st)
     if uid:
         n.append([Sym("uuid"), uid])
     return n
@@ -422,7 +459,8 @@ def footprint_lib_sexp(fp: Footprint) -> list:
 
 def footprint_board_sexp(fp: Footprint, lib_id: str, pos: tuple, angle: float, back: bool, uid: str,
                          path: str | None, sheetname: str | None, sheetfile: str | None,
-                         extra_props: dict, attr_override: list | None = None, locked: bool = False) -> list:
+                         extra_props: dict, attr_override: list | None = None, locked: bool = False,
+                         model_override: list | None = None) -> list:
     """Footprint instance inside a .kicad_pcb.  `fp` must already be flipped when on the back."""
     n = [Sym("footprint"), lib_id]
     if locked:
@@ -462,7 +500,7 @@ def footprint_board_sexp(fp: Footprint, lib_id: str, pos: tuple, angle: float, b
     for i, z in enumerate(fp.zones):
         n.append(zone_sexp(z, stable_uuid(uid, "z", i), True))
     n.append([Sym("embedded_fonts"), NO])
-    for m in fp.models:
+    for m in (fp.models if model_override is None else model_override):
         n.append(model_sexp(m))
     return n
 
@@ -543,7 +581,7 @@ def convert_pad(r: Rec, lm: L.LayerMap, origin, opts: FpOptions) -> Pad | None:
         if hw > 0 or hh > 0:
             has_hole = True
             rel = norm_deg(r.num("relativeAngle"))
-            if ht in ("SLOT", "RECT", "OVAL"):
+            if ht in ("SLOT", "RECT", "OVAL") or abs(hw - hh) > 0.5:  # a ROUND hole with two sizes is a slot too
                 if 45 <= (rel % 180) < 135:
                     hw, hh = hh, hw
                 drill = (True, mm(hw), mm(hh))
@@ -561,42 +599,32 @@ def convert_pad(r: Rec, lm: L.LayerMap, origin, opts: FpOptions) -> Pad | None:
         kind = "smd"
         pre = "F" if side == "F.Cu" else "B"
         layers = [side, f"{pre}.Mask", f"{pre}.Paste"]
-    pt = (shp.get("padType") or "RECT").upper()
-    w = mm(float(shp.get("width") or 0))
-    h = mm(float(shp.get("height") or 0))
-    pad = Pad(num, kind, "rect", kpt(c, origin), angle, (w, h), layers, drill)
-    if pt == "RECT":
-        rad = float(shp.get("radius") or 0)
-        if rad > 0:
-            pad.shape = "roundrect"
-            pad.rratio = min(0.5, rad / 100.0)
-        else:
-            pad.shape = "rect"
-    elif pt == "ELLIPSE":
-        pad.shape = "circle" if abs(w - h) < 1e-6 else "oval"
-    elif pt == "OVAL":
-        pad.shape = "oval" if abs(w - h) > 1e-6 else "circle"
-    else:
-        path = shp.get("path")
-        shapes = geom.parse_contours(path) if path else []
-        polys = []
-        for s in shapes:
-            poly = s.polygon(max_err=0.1)
-            if len(poly) >= 3:
-                # absolute footprint coords -> pad-local, unrotated
-                local = [geom.rot(geom.sub(p, c), -angle) for p in poly]
-                polys.append([(rnd(x * MIL), rnd(-y * MIL)) for x, y in local])
-        if not polys:
-            return None
-        pad.shape = "custom"
-        bx = geom.bbox([q for poly in polys for q in poly])
-        anchor = max(0.01, min(bx[2] - bx[0], bx[3] - bx[1]) * 0.5)
-        anchor = min(anchor, 0.2)
-        pad.size = (anchor, anchor)
-        pad.primitives = polys
-    if pad.shape == "circle":
-        d = max(w, h)
-        pad.size = (d, d)
+    pad = Pad(num, kind, "rect", kpt(c, origin), angle, (0.0, 0.0), layers, drill)
+    shape = _pad_shape(shp, c, angle)
+    if shape is None:
+        return None
+    pad.shape, pad.size, pad.rratio, pad.primitives = shape
+    # other shapes on some copper layers: [start layer, end layer, pad shape] groups (v3: {startLayer, endLayer,
+    # pad}); ranges overlap (top only, all layers, bottom only), the narrower one wins
+    groups = []
+    for g in r.d.get("specialPad") or []:
+        if isinstance(g, dict):
+            g = [g.get("startLayer"), g.get("endLayer"), g.get("pad")]
+        if isinstance(g, (list, tuple)) and len(g) > 2 and isinstance(g[2], dict):
+            groups.append((int(g[0] or 0), int(g[1] or 0), g[2]))
+    rank = lambda x: 0 if x == L.TOP else 999 if x == L.BOTTOM else x  # noqa: E731  stack order
+    groups.sort(key=lambda g: -abs(rank(g[1]) - rank(g[0])))
+    for g in groups:
+        alt = _pad_shape(g[2], c, angle)
+        if alt is None:
+            continue
+        lo, hi = sorted((rank(g[0]), rank(g[1])))  # top 1, inner 15-44, bottom 2: compare in stack order
+        if lo <= rank(L.BOTTOM) <= hi:
+            pad.stack["B.Cu"] = alt
+        if lo < rank(L.INNER_LAST) and hi > rank(L.INNER_FIRST) or L.INNER_FIRST <= lo <= L.INNER_LAST:
+            pad.stack["Inner"] = alt
+        if lo <= rank(L.TOP) <= hi:
+            pad.shape, pad.size, pad.rratio, pad.primitives = alt
     # drill offset (EasyEDA stores the pad shape offset relative to the hole)
     ox, oy = r.num("padOffsetX"), r.num("padOffsetY")
     if has_hole and (abs(ox) > 0.05 or abs(oy) > 0.05):
@@ -632,7 +660,79 @@ def convert_pad(r: Rec, lm: L.LayerMap, origin, opts: FpOptions) -> Pad | None:
             pad.thermal_width = mm(float(r.d["spokeWidth"]))
         if r.d.get("spokeSpace"):
             pad.thermal_gap = mm(float(r.d["spokeSpace"]))
+    if isinstance(r.d.get("spokeAngle"), (int, float)):
+        pad.thermal_angle = float(r.d["spokeAngle"]) % 90 or 90.0  # both: 90 = straight spokes, 45 = diagonal
+    # pad role: 1 / TEST_POINT = test point, 2 / FIDUCIAL = fiducial
+    role = str(r.d.get("padType") or "").upper()
+    if role in ("1", "TEST_POINT", "TESTPOINT", "TEST"):
+        pad.prop = "pad_prop_testpoint"
+    elif role in ("2", "FIDUCIAL", "MARK", "MARK_POINT"):
+        pad.prop = "pad_prop_fiducial_loc"
+    unused = r.d.get("unusedInnerLayers")
+    if kind == "thru_hole" and isinstance(unused, list) and unused:
+        pad.unused_inner = [int(x) for x in unused if isinstance(x, (int, float))]
     return pad
+
+
+def _via_pad(r: Rec, origin, pads: list) -> Pad | None:
+    """A via inside a footprint (KiCad footprints have none): a plated hole pad, numbered like the pad it sits in
+    (thermal vias in an exposed pad share its net) or unnumbered."""
+    d, hole = mm(r.num("viaDiameter")), mm(r.num("holeDiameter"))
+    if d <= 0 or hole <= 0:
+        return None
+    at = kpt((r.num("centerX"), r.num("centerY")), origin)
+    num = ""
+    for p in pads:
+        if p.number and p.kind in ("smd", "thru_hole"):
+            x0, y0, x1, y1 = geom.bbox(p.extent_pts())
+            if x0 <= at[0] <= x1 and y0 <= at[1] <= y1:
+                num = p.number
+                break
+    pad = Pad(num, "thru_hole", "circle", at, 0.0, (d, d), ["*.Cu"], (False, hole, hole))
+    exp = r.d.get("topSolderExpansion")
+    if isinstance(exp, (int, float)) and exp > -999:  # opened via (null = follow the rule: tented)
+        pad.layers = ["*.Cu", "*.Mask"]
+        pad.mask_margin = mm(exp)
+    pad.zone_connect = 2  # vias connect to pours solidly
+    return pad
+
+
+def _pad_shape(shp: dict, c, angle: float):
+    """EasyEDA pad shape -> (KiCad shape, size, roundrect ratio, custom primitives); None if it has no area."""
+    pt = (shp.get("padType") or "RECT").upper()
+    w = mm(float(shp.get("width") or 0))
+    h = mm(float(shp.get("height") or 0))
+    if pt == "RECT":
+        rad = float(shp.get("radius") or 0)
+        if rad > 0:
+            return "roundrect", (w, h), min(0.5, rad / 100.0), []
+        return "rect", (w, h), 0.0, []
+    if pt in ("ELLIPSE", "OVAL"):
+        if abs(w - h) < 1e-6:
+            return "circle", (max(w, h), max(w, h)), 0.0, []
+        return "oval", (w, h), 0.0, []
+    if pt == "NGON":  # regular polygon: diameter, number of sides
+        d = mm(float(shp.get("diameter") or shp.get("width") or 0))
+        n = int(float(shp.get("sides") or shp.get("number") or shp.get("height") or 0))
+        if d <= 0 or n < 3:
+            return None
+        poly = [(rnd(d / 2 * math.cos(2 * math.pi * k / n)), rnd(-d / 2 * math.sin(2 * math.pi * k / n)))
+                for k in range(n)]
+        return "custom", (min(d / 2, 0.2), min(d / 2, 0.2)), 0.0, [poly]
+    path = shp.get("path")
+    shapes = geom.parse_contours(path) if path else []
+    polys = []
+    for sh in shapes:
+        poly = sh.polygon(max_err=0.1)
+        if len(poly) >= 3:
+            # absolute footprint coords -> pad-local, unrotated
+            local = [geom.rot(geom.sub(q, c), -angle) for q in poly]
+            polys.append([(rnd(x * MIL), rnd(-y * MIL)) for x, y in local])
+    if not polys:
+        return None
+    bx = geom.bbox([q for poly in polys for q in poly])
+    anchor = min(max(0.01, min(bx[2] - bx[0], bx[3] - bx[1]) * 0.5), 0.2)
+    return "custom", (anchor, anchor), 0.0, polys
 
 
 def _npth_from_fill(shape: geom.Shape, origin) -> Pad | None:
@@ -672,6 +772,12 @@ def convert_footprint(doc, lm: L.LayerMap | None = None, opts: FpOptions | None 
                 p.src_id = r.id
                 fp.pads.append(p)
                 pads_by_id[r.id] = p
+    for r in doc.recs:
+        if r.type == "VIA":
+            p = _via_pad(r, origin, fp.pads)
+            if p:
+                p.src_id = r.id
+                fp.pads.append(p)
     for r in doc.recs:
         if r.type == "POLY":
             layer = lm.to_kicad(r.int("layerId"))

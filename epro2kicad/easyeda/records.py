@@ -98,6 +98,7 @@ PCB_V2 = {
     "PAD_NET": ["parentId", "num", "padNet", "padId"],
     "POURED": ["id", "pourId", "strokeWidth", "fill", "path"],
     "CANVAS": ["originX", "originY", "unit", "gridXSize", "gridYSize", "snapXSize", "snapYSize"],
+    "GROUP": ["id", "groupName"],
 }
 
 SCH_V2 = {
@@ -189,7 +190,8 @@ def norm_v2_pcb(arr: list) -> Rec | None:
         d["hole"] = _norm_hole(d.get("hole"))
         d["defaultPad"] = _norm_pad_shape(d.get("defaultPad"))
         sp = d.get("specialPad") or []
-        d["specialPad"] = sp
+        d["specialPad"] = [[g[0], g[1], _norm_pad_shape(g[2])] if isinstance(g, list) and len(g) > 2 else g
+                           for g in sp] if isinstance(sp, list) else []
     elif t == "LAYER":
         r.id = str(d.get("layerId"))
         u = d.get("use")
@@ -201,7 +203,8 @@ def norm_v2_pcb(arr: list) -> Rec | None:
     elif t == "POUR":
         pt = d.get("pourType")
         if isinstance(pt, list):
-            d["pourType"] = {"pourType": pt[0] if pt else "SOLID", "fineness": pt[1] if len(pt) > 1 else 8}
+            d["pourType"] = {"pourType": pt[0] if pt else "SOLID", "fineness": pt[1] if len(pt) > 1 else 8,
+                             "params": pt[1:]}
     elif t == "RULE":
         # ["RULE", typeNum, name, isDefault, data]
         d.clear()
@@ -285,6 +288,9 @@ def assign_v2_parts(recs: list[Rec]) -> None:
 # v3
 # --------------------------------------------------------------------------
 
+# v3 numeric text origins (prodocs format/pcb/attr): row by row from the top left
+_V3_ORIGIN = {0: "LEFT_TOP", 1: "CENTER_TOP", 2: "RIGHT_TOP", 3: "LEFT_MIDDLE", 4: "CENTER_MIDDLE",
+              5: "RIGHT_MIDDLE", 6: "LEFT_BOTTOM", 7: "CENTER_BOTTOM", 8: "RIGHT_BOTTOM"}
 _V3_ALIGN_FIX = {"LEFT_CENTER": "LEFT_MIDDLE", "RIGHT_CENTER": "RIGHT_MIDDLE", "CENTER_CENTER": "CENTER_MIDDLE"}
 
 
@@ -324,6 +330,10 @@ def norm_v3(outer: dict, inner: dict, doc_type: str) -> Rec | None:
         r.id = json.dumps(idarr[1])
     if "origin" in d and isinstance(d["origin"], str):
         d["origin"] = _V3_ALIGN_FIX.get(d["origin"], d["origin"])
+    elif isinstance(d.get("origin"), (int, float)) and not isinstance(d.get("origin"), bool):
+        d["origin"] = _V3_ORIGIN.get(int(d["origin"]), "LEFT_BOTTOM")
+    if "positionX" in d and "x" not in d:  # documented v3 names of text positions
+        d["x"], d["y"] = d.get("positionX"), d.get("positionY")
     if "align" in d and isinstance(d["align"], str):
         d["align"] = _V3_ALIGN_FIX.get(d["align"], d["align"])
     return r

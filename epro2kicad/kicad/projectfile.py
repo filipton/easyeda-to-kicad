@@ -56,6 +56,8 @@ def write_project(path: str, name: str, board=None, sheets: list | None = None, 
             for n in sorted(nc.nets):
                 patterns.append({"netclass": nc.name, "pattern": n})
         ns["netclass_patterns"] = patterns
+        if getattr(board, "net_colors", None):
+            ns["net_colors"] = dict(sorted(board.net_colors.items()))
     if sheets:
         pro["sheets"] = sheets
     if drawing_sheet:

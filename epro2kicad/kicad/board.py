@@ -53,6 +53,46 @@ class BoardResult:
     # zone uuid -> {"layer", "grow" (mm), "spokes" [[(x, y)...]]}: finishing of EasyEDA's own pour fills,
     # applied by kicad/fillfix.py with KiCad's polygon engine
     fill_fixes: dict = field(default_factory=dict)
+    net_colors: dict = field(default_factory=dict)  # net -> "rgb(r, g, b)"
+
+
+def mm_to_mil(v: float) -> float:
+    return v / MIL
+
+
+def _image_info(data: bytes):
+    """(width px, height px, pixels per inch) of a PNG / JPEG / BMP, as KiCad reads it (300 ppi when unset)."""
+    import struct
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        w, h = struct.unpack(">II", data[16:24])
+        ppi = 300.0
+        i = data.find(b"pHYs")
+        if i > 0:
+            ppx, _, unit = struct.unpack(">IIB", data[i + 4:i + 13])
+            if unit == 1 and ppx:
+                ppi = ppx * 0.0254
+        return w, h, ppi
+    if data[:2] == b"\xff\xd8":
+        ppi, i = 300.0, 2
+        while i + 9 < len(data):
+            if data[i] != 0xFF:
+                i += 1
+                continue
+            marker, ln = data[i + 1], struct.unpack(">H", data[i + 2:i + 4])[0]
+            if marker == 0xE0 and data[i + 4:i + 9] == b"JFIF\x00":
+                unit, dx = data[i + 11], struct.unpack(">H", data[i + 12:i + 14])[0]
+                if dx and unit in (1, 2):
+                    ppi = dx if unit == 1 else dx * 2.54
+            if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+                h, w = struct.unpack(">HH", data[i + 5:i + 9])
+                return w, h, ppi
+            i += 2 + ln
+        return None
+    if data[:2] == b"BM":
+        w, h = struct.unpack("<ii", data[18:26])
+        ppm = struct.unpack("<i", data[38:42])[0]
+        return w, abs(h), ppm * 0.0254 if ppm > 0 else 300.0
+    return None
 
 
 def _sel_value(rules: dict, typ: str):
@@ -89,7 +129,17 @@ class BoardConverter:
         for r in doc.of("LAYER"):
             if r.int("layerId") in inner and str(r.d.get("layerType", "")).upper() == "PLANE":
                 self.inner_types[r.int("layerId")] = "power"
-        self.lm = L.LayerMap(inner)
+        # stiffener and custom layers that carry something get named KiCad user layers
+        names = {r.int("layerId"): r.str("layerName") for r in doc.of("LAYER")}
+        drawn = {r.int("layerId") for d in [doc] + list(proj.footprints.values()) for r in d.recs
+                 if r.d.get("layerId") is not None and r.type not in ("LAYER", "LAYER_PHYS", "SILK_OPTS", "ACTIVE_LAYER")}
+        custom = {lid: names.get(lid) or f"Layer {lid}" for lid in L.NAMED_USER if lid in drawn}
+        self.lm = L.LayerMap(inner, custom)
+        # EasyEDA groups: GROUP records name them, primitives carry the group number in groupId
+        self.group_names = {str(r.id): r.str("groupName") or f"Group {r.id}" for r in doc.of("GROUP")}
+        self.group_of = {r.id: str(r.d["groupId"]) for r in doc.recs
+                         if r.d.get("groupId") not in (None, 0, "0", "") and r.type != "REUSE_BLOCK"}
+        self.group_members: dict[str, list] = {}
         self.fp_opts = FpOptions(default_mask_mil=self.rules.mask, default_paste_mil=self.rules.paste)
         self.offset = (0.0, 0.0)
         self.items: list = []
@@ -110,7 +160,18 @@ class BoardConverter:
         return (rnd(x * MIL + self.offset[0]), rnd(-y * MIL + self.offset[1]))
 
     def uid(self, *parts) -> str:
-        return stable_uuid(self.doc.uuid, *parts)
+        u = stable_uuid(self.doc.uuid, *parts)
+        g = self.group_of.get(str(parts[1])) if len(parts) > 1 else None
+        if g:  # every KiCad item made from a grouped EasyEDA primitive joins its group
+            self.group_members.setdefault(g, []).append(u)
+        return u
+
+    @staticmethod
+    def _lock(n: list, r: Rec) -> list:
+        if r.bool("locked"):
+            n.insert(-1 if n and isinstance(n[-1], list) and n[-1][:1] == [Sym("uuid")] else len(n),
+                     [Sym("locked"), YES])
+        return n
 
     # ------------------------------------------------------------------ main
     def convert(self) -> BoardResult:
@@ -164,17 +225,20 @@ class BoardConverter:
                 elif t == "IMAGE":
                     self._image(r, gr)
                 elif t == "DIMENSION":
-                    self.stats["dimensions_skipped"] = self.stats.get("dimensions_skipped", 0) + 1
+                    self._dimension(r, gr)
+                elif t == "OBJ":
+                    self._obj(r, gr)
             except Exception as e:  # keep going, report
                 self.warn.append(f"{t} {r.id}: {e!r}")
         self.stats.update(footprints=len(fps_sexp), tracks=len(segs), vias=len(vias), zones=len(zones),
                           graphics=len(gr))
         head = self._header()
-        body = head + fps_sexp + gr + segs + vias + zones + [[Sym("embedded_fonts"), NO]]
+        body = head + fps_sexp + gr + segs + vias + zones
+        body += self._groups(body) + [[Sym("embedded_fonts"), NO]]
         board = [Sym("kicad_pcb")] + body
         netclasses, rules_cfg, dru, tw, vd = self._design_rules()
         return BoardResult(board, self.lib_fps, netclasses, rules_cfg, dru, self.nets, self.warn, self.stats,
-                           self.pad_nets, tw, vd, self.page, getattr(self, "fill_fixes", {}))
+                           self.pad_nets, tw, vd, self.page, getattr(self, "fill_fixes", {}), self.net_colors())
 
     # ------------------------------------------------------------------ layout
     def _outline_points(self):
@@ -221,6 +285,12 @@ class BoardConverter:
         if abs(self.rules.paste) > 1e-6:
             extra.append([Sym("pad_to_paste_clearance"), rnd(mm(self.rules.paste), 4)])
         setup = [setup[0]] + extra + setup[1:]
+        canvas = next(iter(self.doc.of("CANVAS")), None)
+        if canvas is not None and (canvas.num("originX") or canvas.num("originY")):
+            # EasyEDA's canvas origin is the board's coordinate origin (drill / pick-and-place files)
+            o = self.P(canvas.num("originX"), canvas.num("originY"))
+            at = next(i for i, x in enumerate(setup) if isinstance(x, list) and x[:1] == [Sym("pcbplotparams")])
+            setup[at:at] = [[Sym("aux_axis_origin"), *o], [Sym("grid_origin"), *o]]
         if not self.rules.via_tented:
             for x in setup:
                 if isinstance(x, list) and x and x[0] == "tenting":
@@ -278,9 +348,18 @@ class BoardConverter:
                 v = 0
             return v if v > 0 else default
 
-        rows = [[Sym("layer"), "F.SilkS", [Sym("type"), "Top Silk Screen"]],
+        # EasyEDA's 3D view settings say what the board is ordered as: mask colour and surface finish
+        d3 = next(iter(self.doc.of("D3_ATTRIBUTE")), None)
+        mask = str(d3.d.get("boardColor") or "").title() if d3 is not None else ""
+        mask = mask if mask in ("Green", "Red", "Blue", "Purple", "Black", "White", "Yellow") else ""
+        silk = ("Black" if mask == "White" else "White") if mask else ""
+        finish = {"GOLD": "ENIG", "SILVER": "HAL lead-free", "TIN": "HAL lead-free"}.get(
+            str(d3.d.get("sprayColor") or "").upper(), "None") if d3 is not None else "None"
+        col = lambda c: [[Sym("color"), c]] if c else []  # noqa: E731
+        rows = [[Sym("layer"), "F.SilkS", [Sym("type"), "Top Silk Screen"]] + col(silk),
                 [Sym("layer"), "F.Paste", [Sym("type"), "Top Solder Paste"]],
-                [Sym("layer"), "F.Mask", [Sym("type"), "Top Solder Mask"], [Sym("thickness"), rnd(thick(5, 0.01), 4)]]]
+                [Sym("layer"), "F.Mask", [Sym("type"), "Top Solder Mask"]] + col(mask) +
+                [[Sym("thickness"), rnd(thick(5, 0.01), 4)]]]
         total = thick(5, 0.01) + thick(6, 0.01)
         cu_ids = [1] + sorted(self.lm.inner) + [2]
         for i, lid in enumerate(cu_ids):
@@ -300,10 +379,11 @@ class BoardConverter:
                              [Sym("thickness"), rnd(dt, 4)], [Sym("material"), mat(did) if did else "FR4"],
                              [Sym("epsilon_r"), rnd(eps(did) if did else 4.5, 3)],
                              [Sym("loss_tangent"), rnd(loss(did) if did else 0.02, 4)]])
-        rows += [[Sym("layer"), "B.Mask", [Sym("type"), "Bottom Solder Mask"], [Sym("thickness"), rnd(thick(6, 0.01), 4)]],
+        rows += [[Sym("layer"), "B.Mask", [Sym("type"), "Bottom Solder Mask"]] + col(mask) +
+                 [[Sym("thickness"), rnd(thick(6, 0.01), 4)]],
                  [Sym("layer"), "B.Paste", [Sym("type"), "Bottom Solder Paste"]],
-                 [Sym("layer"), "B.SilkS", [Sym("type"), "Bottom Silk Screen"]],
-                 [Sym("copper_finish"), "None"],
+                 [Sym("layer"), "B.SilkS", [Sym("type"), "Bottom Silk Screen"]] + col(silk),
+                 [Sym("copper_finish"), finish],
                  [Sym("dielectric_constraints"), NO]]
         return [Sym("stackup")] + rows, total
 
@@ -413,8 +493,9 @@ class BoardConverter:
             attr.append("board_only")
         lib_id = f"{self.lib_nick}:{lib.name}"
         # model: footprint models are attached in the library footprint already
+        model = self.models.get(f"comp:{c.id}")  # this instance's own 3D model / transform
         return footprint_board_sexp(fp, lib_id, pos, kangle, back, uid, path, sheetname, sheetfile, props, attr,
-                                    locked=bool(c.d.get("locked")))
+                                    locked=bool(c.d.get("locked")), model_override=[model] if model else None)
 
     def _fit_text(self, r: Rec, text: str, angle: float, back: bool):
         """textfit for a STRING / ATTR record: Hershey stroke font, or a TrueType font (EasyEDA's rendering of it
@@ -475,7 +556,8 @@ class BoardConverter:
         p.angle = 0.0
         self.stats["free_pads"] = self.stats.get("free_pads", 0) + 1
         return footprint_board_sexp(fp, f"{self.lib_nick}:{fp.name}", pos, angle, False, uid, None, None, None,
-                                    {}, ["board_only", "exclude_from_pos_files", "exclude_from_bom"])
+                                    {}, ["board_only", "exclude_from_pos_files", "exclude_from_bom"],
+                                    locked=r.bool("locked"))
 
     # ------------------------------------------------------------------ primitives
     def _layer(self, lid):
@@ -500,7 +582,7 @@ class BoardConverter:
         else:
             if layer == "Edge.Cuts" or lid == L.MULTI:
                 layer, w = "Edge.Cuts", w or 0.05  # EasyEDA's own line width
-            gr.append(graphic_sexp(Graphic("line", layer, w, [a, b]), self.uid("gl", r.id), prefix="gr_"))
+            gr.append(self._lock(graphic_sexp(Graphic("line", layer, w, [a, b]), self.uid("gl", r.id), prefix="gr_"), r))
 
     def _arc(self, r: Rec, gr, segs):
         lid = r.int("layerId")
@@ -532,16 +614,33 @@ class BoardConverter:
             n = [Sym("arc"), [Sym("start"), *pts[0]], [Sym("mid"), *pts[1]], [Sym("end"), *pts[2]],
                  [Sym("width"), rnd(w, 4)], [Sym("layer"), layer], [Sym("net"), self.net(r.str("netName"))],
                  [Sym("uuid"), self.uid("arc", r.id)]]
-            segs.append(n)
+            segs.append(self._lock(n, r))
         else:
             if layer == "Edge.Cuts" or lid == L.MULTI:
                 layer, w = "Edge.Cuts", w or 0.05  # EasyEDA's own line width
-            gr.append(graphic_sexp(Graphic("arc", layer, w, pts), self.uid("ga", r.id), prefix="gr_"))
+            gr.append(self._lock(graphic_sexp(Graphic("arc", layer, w, pts), self.uid("ga", r.id), prefix="gr_"), r))
 
     def _via(self, r: Rec):
-        n = [Sym("via"), [Sym("at"), *self.P(r.num("centerX"), r.num("centerY"))],
+        layers, kind = ["F.Cu", "B.Cu"], None
+        span = self.rules.blind.get(r.str("ruleName"))
+        if span:  # blind / buried: the rule named by the via gives its start and end layers
+            a, b = self.lm.copper(span[0]), self.lm.copper(span[1])
+            cu = self.lm.copper_layers()
+            if a and b and a != b:
+                layers = sorted((a, b), key=cu.index)
+                if layers != ["F.Cu", "B.Cu"]:
+                    kind = Sym("blind" if "F.Cu" in layers or "B.Cu" in layers else "buried")
+                    self.stats["blind_buried_vias"] = self.stats.get("blind_buried_vias", 0) + 1
+        elif str(r.d.get("viaType") or "").upper() == "BLIND":
+            self.warn.append(f"via {r.id}: blind via rule '{r.str('ruleName')}' not found, made a through via")
+        n = [Sym("via")] + ([kind] if kind else []) + [
+             [Sym("at"), *self.P(r.num("centerX"), r.num("centerY"))],
              [Sym("size"), rnd(mm(r.num("viaDiameter")), 4)], [Sym("drill"), rnd(mm(r.num("holeDiameter")), 4)],
-             [Sym("layers"), "F.Cu", "B.Cu"]]
+             [Sym("layers"), *layers]]
+        unused = r.d.get("unusedInnerLayers")
+        if isinstance(unused, list) and unused and self.lm.inner:
+            # EasyEDA hides the rings on unconnected inner layers; KiCad works out the same itself
+            n += [[Sym("remove_unused_layers"), YES], [Sym("keep_end_layers"), YES]]
         if r.d.get("locked"):
             n.insert(1, Sym("locked"))
         exp = r.d.get("topSolderExpansion")
@@ -579,19 +678,21 @@ class BoardConverter:
                         continue
                     if sg.kind == "arc":
                         m = self.P(*geom.arc_mid(sg.a, sg.b, sg.sweep))
-                        segs.append([Sym("arc"), [Sym("start"), *a], [Sym("mid"), *m], [Sym("end"), *b],
-                                     [Sym("width"), rnd(w, 4)], [Sym("layer"), layer], [Sym("net"), self.net(net)],
-                                     [Sym("uuid"), self.uid("parc", r.id, k, i)]])
+                        segs.append(self._lock([Sym("arc"), [Sym("start"), *a], [Sym("mid"), *m], [Sym("end"), *b],
+                                                [Sym("width"), rnd(w, 4)], [Sym("layer"), layer],
+                                                [Sym("net"), self.net(net)],
+                                                [Sym("uuid"), self.uid("parc", r.id, k, i)]], r))
                     else:
-                        segs.append([Sym("segment"), [Sym("start"), *a], [Sym("end"), *b], [Sym("width"), rnd(w, 4)],
-                                     [Sym("layer"), layer], [Sym("net"), self.net(net)],
-                                     [Sym("uuid"), self.uid("pseg", r.id, k, i)]])
+                        segs.append(self._lock([Sym("segment"), [Sym("start"), *a], [Sym("end"), *b],
+                                                [Sym("width"), rnd(w, 4)], [Sym("layer"), layer],
+                                                [Sym("net"), self.net(net)],
+                                                [Sym("uuid"), self.uid("pseg", r.id, k, i)]], r))
                 continue
             for i, g in enumerate(self._shape_to_board(s, layer, w)):
                 n = graphic_sexp(g, self.uid("gp", r.id, k, i), prefix="gr_")
                 if L.is_copper(layer) and net:
                     n.insert(-1, [Sym("net"), self.net(net)])
-                gr.append(n)
+                gr.append(self._lock(n, r))
 
     def _fill(self, r: Rec, gr):
         lid = r.int("layerId")
@@ -599,7 +700,7 @@ class BoardConverter:
         if lid in (L.OUTLINE, L.MULTI, L.HOLE):
             for k, s in enumerate(shapes):
                 for i, g in enumerate(self._shape_to_board(s, "Edge.Cuts", 0.05)):
-                    gr.append(graphic_sexp(g, self.uid("cut", r.id, k, i), prefix="gr_"))
+                    gr.append(self._lock(graphic_sexp(g, self.uid("cut", r.id, k, i), prefix="gr_"), r))
             return
         layer = self._layer(lid)
         if layer is None:
@@ -610,7 +711,7 @@ class BoardConverter:
             n = graphic_sexp(g, self.uid("fc", r.id), prefix="gr_")
             if L.is_copper(layer) and net:
                 n.insert(-1, [Sym("net"), self.net(net)])
-            gr.append(n)
+            gr.append(self._lock(n, r))
             return
         polys = [s.polygon(0.2) for s in shapes]
         for k, (outer, holes) in enumerate(geom.nest_contours(polys)):
@@ -621,7 +722,7 @@ class BoardConverter:
             n = graphic_sexp(g, self.uid("fill", r.id, k), prefix="gr_")
             if L.is_copper(layer) and net:
                 n.insert(-1, [Sym("net"), self.net(net)])
-            gr.append(n)
+            gr.append(self._lock(n, r))
 
     def _zone_polys(self, path, scale: float = 1.0) -> list[list]:
         shapes = geom.parse_contours(path)
@@ -727,6 +828,11 @@ class BoardConverter:
                     min_w = min(min_w, mm(t.spoke_width) * 0.95)
         n.append([Sym("min_thickness"), rnd(max(min_w, 0.0508), 4)])
         pt = r.d.get("pourType") or {}
+        if isinstance(pt, list):  # documented form: ["SOLID", min neck] / ["LINE", mode, angle, width, spacing]
+            pt = {"pourType": pt[0] if pt else "SOLID", "params": pt[1:]}
+        elif isinstance(pt, dict) and str(pt.get("pourType")).upper() == "GRID_LINE":  # what 3.x writes
+            pt = {"pourType": "LINE", "params": [0, pt.get("angle") or 0, pt.get("strokeWidth") or 10,
+                                                  pt.get("strokeSpacing") or 20]}
         ptype = str(pt.get("pourType") if isinstance(pt, dict) else pt or "SOLID").upper()
         filled, spokes = self._easyeda_fill(r.id)
         fill = [Sym("fill"), Sym("yes")] if filled else [Sym("fill")]
@@ -734,7 +840,15 @@ class BoardConverter:
             fill += [[Sym("mode"), Sym("hatch")]]
         fill += [[Sym("thermal_gap"), rnd(gap, 4)], [Sym("thermal_bridge_width"), rnd(spoke, 4)],
                  [Sym("island_removal_mode"), 1 if r.d.get("keepIsland") in (1, True) else 0]]
-        if ptype in ("HATCH", "GRID", "MESH", "HATCHED"):
+        prm = [x for x in (pt.get("params") or []) if isinstance(x, (int, float))] if isinstance(pt, dict) else []
+        if ptype == "LINE" and len(prm) >= 4:
+            # line pour (mode, angle, line width, spacing): KiCad hatches in a grid, at the same angle and pitch
+            fill += [[Sym("mode"), Sym("hatch")], [Sym("hatch_thickness"), rnd(mm(prm[2]), 4)],
+                     [Sym("hatch_gap"), rnd(mm(prm[3]), 4)], [Sym("hatch_orientation"), rnd(prm[1] % 90, 4)],
+                     [Sym("hatch_border_algorithm"), Sym("hatch_thickness")], [Sym("hatch_min_hole_area"), 0.3]]
+            if prm[0] in (1, 2):
+                self.warn.append(f"pour {r.str('name') or r.id}: EasyEDA's one-direction line pour is a grid in KiCad")
+        elif ptype in ("HATCH", "GRID", "MESH", "HATCHED"):
             fine = float(pt.get("fineness") or 8) if isinstance(pt, dict) else 8
             fill += [[Sym("hatch_thickness"), rnd(mm(fine), 4)], [Sym("hatch_gap"), rnd(mm(fine * 3), 4)],
                      [Sym("hatch_orientation"), 45], [Sym("hatch_border_algorithm"), Sym("hatch_thickness")],
@@ -782,7 +896,7 @@ class BoardConverter:
         self._regions_named = getattr(self, "_regions_named", {})
         if z.name:
             self._regions_named[r.id] = z.name
-        return zone_sexp(z, self.uid("region", r.id), False)
+        return self._lock(zone_sexp(z, self.uid("region", r.id), False), r)
 
     def _teardrop(self, r: Rec):
         layer = self._layer(r.int("layerId"))
@@ -833,7 +947,7 @@ class BoardConverter:
         lay = [Sym("layer"), layer]
         if r.d.get("reverse") in (1, True):
             lay.append(Sym("knockout"))
-        gr.append([Sym("gr_text"), text, at, lay, [Sym("uuid"), self.uid("txt", r.id)], eff])
+        gr.append(self._lock([Sym("gr_text"), text, at, lay, [Sym("uuid"), self.uid("txt", r.id)], eff], r))
 
     def _image(self, r: Rec, gr):
         lid = r.int("layerId")
@@ -870,9 +984,225 @@ class BoardConverter:
             if len(pts) < 3:
                 continue
             g = Graphic("poly", layer, 0, [self.P(*tf(p)) for p in pts], True)
-            gr.append(graphic_sexp(g, self.uid("img", r.id, k), prefix="gr_"))
+            gr.append(self._lock(graphic_sexp(g, self.uid("img", r.id, k), prefix="gr_"), r))
             n_out += 1
         self.stats["image_polys"] = self.stats.get("image_polys", 0) + n_out
+
+    def _groups(self, body: list) -> list:
+        """KiCad groups for EasyEDA's (members: every item made from a primitive with that groupId)."""
+        present: set = set()
+
+        def walk(n):
+            if isinstance(n, list):
+                if len(n) == 2 and n[0] == Sym("uuid"):
+                    present.add(n[1])
+                for x in n:
+                    if isinstance(x, list):
+                        walk(x)
+        for n in body:
+            if isinstance(n, list) and n[:1] != [Sym("footprint")]:
+                walk(n)
+            elif isinstance(n, list):  # a footprint is one member, its own children are not
+                u = next((x[1] for x in n if isinstance(x, list) and x[:1] == [Sym("uuid")]), None)
+                if u:
+                    present.add(u)
+        out = []
+        for g, members in sorted(self.group_members.items()):
+            m = sorted(set(members) & present)
+            if m:
+                out.append([Sym("group"), self.group_names.get(g, f"Group {g}"),
+                            [Sym("uuid"), stable_uuid(self.doc.uuid, "group", g)], [Sym("members")] + m])
+        self.stats["groups"] = len(out)
+        return out
+
+    def _dimension(self, r: Rec, gr):
+        """LENGTH -> KiCad aligned dimension, RADIUS -> radial (both keep measuring); ANGLE (KiCad has no angular
+        dimension) -> its lines and text."""
+        layer = self._layer(r.int("layerId"))
+        if layer is None:
+            return
+        c = r.d.get("coordinates") or r.d.get("coords") or []
+        nums = [float(x) for x in c if isinstance(x, (int, float))]
+        pts = [(nums[i], nums[i + 1]) for i in range(0, len(nums) - 1, 2)]
+        kind = str(r.d.get("dimensionType") or r.d.get("type") or "").upper()
+        # the text: v3 keeps it inline, v2 in an ATTR of the dimension
+        txt = r.d.get("text") if isinstance(r.d.get("text"), dict) else None
+        if txt is None:
+            a = next((a for a in self.doc.of("ATTR") if a.d.get("parentId") == r.id), None)
+            txt = dict(a.d, text=a.str("value")) if a is not None else None
+        value = str((txt or {}).get("text") or "")
+        size = mm(float((txt or {}).get("fontSize") or 60)) * textfit.CAP
+        # EasyEDA files carry absurd stroke widths here (17000 mil seen): keep lines and text sensible
+        w = mm(r.num("lineWidth") or r.num("strokeWidth") or 6)
+        w = w if 0 < w <= 1.0 else 0.15
+        thick = mm(float((txt or {}).get("strokeWidth") or 6))
+        thick = thick if 0 < thick <= size / 3 else size / 8
+        unit = str(r.d.get("unit") or "mm").lower()
+        units = {"mm": 2, "cm": 2, "mil": 1, "inch": 0}.get(unit, 2)
+        num = re.search(r"[-+]?\d+(?:\.(\d+))?", value)
+        digits = len(num.group(1) or "") if num else int(r.num("precision", 2))
+        suffix = bool(re.search(r"[a-z]", value.replace("R", "", 1).lower()))
+        fmt = [Sym("format"), [Sym("prefix"), "R" if kind == "RADIUS" and value.startswith("R") else ""],
+               [Sym("suffix"), ""], [Sym("units"), units], [Sym("units_format"), 1 if suffix else 0],
+               [Sym("precision"), min(digits, 5)]]
+
+        def text_node(at):
+            return [Sym("gr_text"), value, [Sym("at"), rnd(at[0]), rnd(at[1])], [Sym("layer"), layer],
+                    [Sym("uuid"), self.uid("dimt", r.id)],
+                    [Sym("effects"), [Sym("font"), [Sym("size"), rnd(size, 4), rnd(size, 4)],
+                                      [Sym("thickness"), rnd(thick, 4)]]]]
+        if kind == "LENGTH" and len(pts) == 4:
+            # feature points first and last, the dimension line runs between the middle two and its length is the
+            # measured value: the far point is projected onto the dimension direction
+            p1, p2, p3, p4 = (self.P(*q) for q in pts)
+            dx, dy = p3[0] - p2[0], p3[1] - p2[1]
+            ln = math.hypot(dx, dy)
+            if ln < 1e-6:
+                return
+            ux, uy = dx / ln, dy / ln
+            t = (p4[0] - p1[0]) * ux + (p4[1] - p1[1]) * uy
+            a, b = p1, (p1[0] + ux * t, p1[1] + uy * t)
+            if abs(t) < 1e-6:
+                return
+            sx, sy = (b[0] - a[0]) / t, (b[1] - a[1]) / t  # unit vector start -> end
+            height = (p2[0] - a[0]) * -sy + (p2[1] - a[1]) * sx
+            n = [Sym("dimension"), [Sym("type"), Sym("aligned")], [Sym("layer"), layer],
+                 [Sym("uuid"), self.uid("dim", r.id)], [Sym("pts"), [Sym("xy"), *a], [Sym("xy"), rnd(b[0]), rnd(b[1])]],
+                 [Sym("height"), rnd(height, 4)], fmt,
+                 [Sym("style"), [Sym("thickness"), rnd(w, 4)], [Sym("arrow_length"), 1.27],
+                  [Sym("text_position_mode"), 0], [Sym("arrow_direction"), Sym("outward")],
+                  [Sym("extension_height"), 0.58642], [Sym("extension_offset"), 0], [Sym("keep_text_aligned"), YES]],
+                 text_node(((p2[0] + p3[0]) / 2, (p2[1] + p3[1]) / 2))]
+            gr.append(self._lock(n, r))
+            self.stats["dimensions"] = self.stats.get("dimensions", 0) + 1
+            return
+        if kind == "RADIUS" and len(nums) >= 5:
+            # arc point, end of the leader, radius: the centre lies the radius behind the arc point
+            (x1, y1), (x2, y2), rad = (nums[0], nums[1]), (nums[2], nums[3]), nums[4]
+            ln = math.hypot(x2 - x1, y2 - y1)
+            if ln > 1e-6 and rad > 0:
+                cx, cy = x1 - (x2 - x1) / ln * rad, y1 - (y2 - y1) / ln * rad
+                n = [Sym("dimension"), [Sym("type"), Sym("radial")], [Sym("layer"), layer],
+                     [Sym("uuid"), self.uid("dim", r.id)], [Sym("pts"), [Sym("xy"), *self.P(cx, cy)],
+                                                             [Sym("xy"), *self.P(x1, y1)]],
+                     [Sym("leader_length"), rnd(mm(ln), 4)], fmt,
+                     [Sym("style"), [Sym("thickness"), rnd(w, 4)], [Sym("arrow_length"), 1.27],
+                      [Sym("text_position_mode"), 0], [Sym("extension_offset"), 0], [Sym("keep_text_aligned"), YES]],
+                     text_node(self.P(x2, y2))]
+                gr.append(self._lock(n, r))
+                self.stats["dimensions"] = self.stats.get("dimensions", 0) + 1
+                return
+        for i, (p, q) in enumerate(zip(pts, pts[1:])):
+            gr.append(self._lock(graphic_sexp(Graphic("line", layer, w, [self.P(*p), self.P(*q)]),
+                                              self.uid("dim", r.id, i), prefix="gr_"), r))
+        if txt and value:
+            self._string(Rec("STRING", f"{r.id}t", dict(txt, text=value, layerId=r.int("layerId"),
+                                                         strokeWidth=mm_to_mil(thick))), gr)
+        self.warn.append(f"{kind.lower() or 'unknown'} dimension {r.id}: drawn as lines and text "
+                         "(KiCad has no dimension of that kind)")
+
+    def _obj(self, r: Rec, gr):
+        """Embedded picture (PNG / JPEG / BMP, inline or from a BLOB) -> KiCad reference image on its layer."""
+        layer = self._layer(r.int("layerId"))
+        url = r.str("path")
+        if url.startswith("blob:"):
+            url = self.proj.blobs.get(url.split(":")[-1], "")
+        m = re.match(r"data:([^;,]*)(;base64)?,(.*)", url, re.S)
+        if layer is None or not m or not m.group(2):
+            if url:
+                self.warn.append(f"picture {r.id}: no image data the board can embed")
+            return
+        import base64
+        data = base64.b64decode(m.group(3))
+        info = _image_info(data)
+        if info is None:
+            self.warn.append(f"picture {r.id}: {m.group(1) or 'unknown format'} cannot be embedded")
+            return
+        px_w, _, ppi = info
+        w, h = r.num("width"), r.num("height")
+        x0, y0 = r.num("startX"), r.num("startY")
+        # top-left start, Y up: the centre is half the size right and down
+        cx, cy = geom.rot((w / 2, -h / 2), r.num("angle"))
+        scale = mm(w) / (px_w * 25.4 / ppi) if px_w else 1.0
+        n = [Sym("image"), [Sym("at"), *self.P(x0 + cx, y0 + cy)], [Sym("layer"), layer], [Sym("scale"), rnd(scale, 6)]]
+        if r.bool("locked"):
+            n.append([Sym("locked"), YES])
+        b64 = base64.b64encode(data).decode()
+        n.append([Sym("data")] + [b64[i:i + 76] for i in range(0, len(b64), 76)])
+        n.append([Sym("uuid"), self.uid("obj", r.id)])
+        gr.append(n)
+        if norm_deg(r.num("angle")) or r.bool("mirror"):
+            self.warn.append(f"picture {r.id}: KiCad shows reference images unrotated and unmirrored")
+
+    def _net_rules(self) -> list:
+        """Differential pairs, equal-length groups and net lengths as KiCad custom rules on the actual net names
+        (KiCad only pairs nets by name suffix, EasyEDA pairs any two nets)."""
+        R = self.rules
+        nets = {}  # EasyEDA NET records by KiCad net name
+        for r in self.doc.of("NET"):
+            nm = r.d.get("name") or r.id
+            nets[self.net_rename.get(nm, nm)] = r
+        q = lambda n: n.replace("\\", "\\\\").replace("'", "\\'")  # noqa: E731
+        any_of = lambda ns: " || ".join(f"A.NetName == '{q(n)}'" for n in sorted(ns))  # noqa: E731
+        out = []
+
+        def length_rule(label, ns, rule_name):
+            lo, hi = R.net_length.get(rule_name, (0, 0)) if rule_name else (0, 0)
+            if ns and (lo > 0 or hi > 0):
+                lim = (f" (min {rnd(mm(lo), 4)}mm)" if lo > 0 else "") + (f" (max {rnd(mm(hi), 4)}mm)" if hi > 0 else "")
+                out.extend([f"(rule \"{label} length\"\n\t(constraint length{lim})\n\t(condition \"{any_of(ns)}\"))", ""])
+
+        pairs: dict = {}
+        groups: dict = {}
+        for n, r in nets.items():
+            if r.d.get("differentialName"):
+                pairs.setdefault(str(r.d["differentialName"]), {})["P" if r.bool("isPositiveNet") else "N"] = n
+            if r.d.get("equalLengthGroupName"):
+                groups.setdefault(str(r.d["equalLengthGroupName"]), set()).add(n)
+        for name, pn in sorted(pairs.items()):
+            if len(pn) != 2:
+                continue
+            sel = R.pair_rules.get(name, {})
+            d = R.diff_full.get(sel.get("DIFFER_ENTAIL")) or R.diff_full.get(R.defaults.get("DIFFER_ENTAIL")) \
+                or next(iter(R.diff_full.values()), None)
+            if d:
+                wmin, wdef, wmax, gap, tol = d
+                c = [f"(constraint track_width (min {rnd(mm(wmin), 4)}mm) (opt {rnd(mm(wdef), 4)}mm)"
+                     f" (max {rnd(mm(wmax), 4)}mm))"]
+                if tol:
+                    c.append(f"(constraint skew (max {rnd(mm(tol), 4)}mm))")
+                out.extend([f"(rule \"diff pair {name}\"\n\t" + "\n\t".join(c) +
+                            f"\n\t(condition \"{any_of(pn.values())}\"))", ""])
+                if gap:
+                    p_, n_ = q(pn["P"]), q(pn["N"])
+                    # EasyEDA's pair spacing is between the pair's traces only
+                    trk = "(A.Type == 'Track' || A.Type == 'Arc') && (B.Type == 'Track' || B.Type == 'Arc')"
+                    out.extend([f"(rule \"diff pair {name} gap\"\n\t(constraint clearance (min {rnd(mm(gap), 4)}mm))\n"
+                                f"\t(condition \"{trk} && ((A.NetName == '{p_}' && B.NetName == '{n_}') || "
+                                f"(A.NetName == '{n_}' && B.NetName == '{p_}'))\"))", ""])
+            length_rule(f"diff pair {name}", set(pn.values()), sel.get("NET_LENGTH"))
+        for name, ns in sorted(groups.items()):
+            length_rule(f"equal length {name}", ns, R.eqlen_rules.get(name, {}).get("NET_LENGTH"))
+        for n, sel in sorted(R.net_rules.items()):
+            length_rule(f"net {n}", {self.net_rename.get(n, n)}, sel.get("NET_LENGTH"))
+        for cls, sel in sorted(R.class_rules.items()):
+            ns = {n for n, r in nets.items() if r.d.get("netType") == cls}
+            length_rule(f"class {cls}", ns, sel.get("NET_LENGTH"))
+        if pairs:
+            self.stats["diff_pairs"] = sum(1 for pn in pairs.values() if len(pn) == 2)
+        return out
+
+    def net_colors(self) -> dict:
+        """Net -> colour, from EasyEDA's per-net special colours."""
+        out = {}
+        for r in self.doc.of("NET"):
+            col = r.str("specialColor")
+            if re.fullmatch(r"#[0-9a-fA-F]{6}", col):
+                nm = r.d.get("name") or r.id
+                nm = self.net_rename.get(nm, nm)
+                if nm in self.nets:
+                    out[nm] = "rgb({}, {}, {})".format(*(int(col[i:i + 2], 16) for i in (1, 3, 5)))
+        return out
 
     # ------------------------------------------------------------------ rules
     def _design_rules(self):
@@ -991,6 +1321,7 @@ class BoardConverter:
                            f" (opt {rnd(mm(t[1]), 4)}mm) (max {rnd(mm(t[2]), 4)}mm))\n"
                            f"\t(condition \"A.insideArea('{names[rid]}')\"))")
                 dru.append("")
+        dru += self._net_rules()
         dru_text = "\n".join(dru) + "\n" if len(dru) > 2 else ""
         widths = sorted({rnd(mm(t[1]), 4) for t in R.track.values()} |
                         {rnd(mm(r.num("width")), 4) for r in self.doc.of("LINE") if L.is_copper(self._layer(r.int("layerId")) or "")})

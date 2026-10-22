@@ -336,7 +336,7 @@ def _load_v3(zf: zipfile.ZipFile, names: list[str]) -> Project:
         elif dt == "BLOB":
             for r in recs:
                 if r.type == "BLOB":
-                    url = r.d.get("url") or r.d.get("data") or ""
+                    url = r.d.get("url") or r.d.get("data") or r.d.get("content") or ""
                     proj.blobs[r.id] = url
     for uuid, (title, meta) in sch_docs.items():
         proj.schematics[uuid] = Schematic(uuid, title)
