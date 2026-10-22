@@ -1,0 +1,591 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LCSC parts</title>
+<style>
+:root{--bg:#fff;--bg2:#f4f5f7;--bg3:#eceef1;--fg:#1d1f23;--mut:#6b7079;--line:#e4e6ea;--acc:#1f883d;--acc2:#e9f6ec;--accfg:#fff;--link:#0b62c4;--warn:#b54708;--sel:#e8f0fe;--selbar:#2f6fe4;--pv:#fff;--pvfp:#1b1f24;--shadow:0 8px 28px #0002}
+@media (prefers-color-scheme:dark){:root{--bg:#1c1d20;--bg2:#24262a;--bg3:#2d3035;--fg:#e9eaec;--mut:#9a9ea6;--line:#34373c;--acc:#2ea043;--acc2:#1d3325;--link:#6cb6ff;--warn:#f0a050;--sel:#22314a;--selbar:#5b9bff;--pv:#f4f4f4;--shadow:0 8px 28px #0008}}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.4 -apple-system,system-ui,"Segoe UI",sans-serif;display:flex;flex-direction:column;overflow:hidden;-webkit-font-smoothing:antialiased}
+button,input,select{font:inherit;color:inherit}
+a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}
+.mut{color:var(--mut)}.err{color:var(--warn)}
+header{padding:10px 10px 8px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:7px;position:relative}
+.row{display:flex;gap:6px;align-items:center}
+.search{flex:1;position:relative;display:flex}
+.search svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);opacity:.5;pointer-events:none}
+#q{flex:1;min-width:0;padding:8px 10px 8px 32px;border:1px solid var(--line);border-radius:9px;background:var(--bg2);transition:border-color .12s,background .12s}
+#q:focus{outline:0;border-color:var(--acc);background:var(--bg)}
+.btn{border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:5px 10px;cursor:pointer;white-space:nowrap;transition:background .1s,border-color .1s}
+.btn:hover{background:var(--bg2)}
+.btn.on{background:var(--acc2);border-color:var(--acc);color:var(--fg)}
+.primary{background:var(--acc);color:var(--accfg);border:0;border-radius:8px;padding:8px 16px;font-weight:600;cursor:pointer}
+.primary:hover{filter:brightness(1.07)}.primary:disabled{opacity:.45;cursor:default;filter:none}
+.crumb{display:flex;gap:5px;flex-wrap:wrap;align-items:center}.crumb:empty{display:none}
+.chip{display:inline-flex;align-items:center;gap:4px;background:var(--acc2);border-radius:20px;padding:2px 4px 2px 9px;font-size:12px}
+.chip b{font-weight:500;color:var(--mut)}
+.chip button{border:0;background:none;cursor:pointer;padding:0 4px;color:var(--mut);font-size:14px;line-height:1;border-radius:50%}
+.chip button:hover{color:var(--fg)}
+.opts{display:flex;gap:4px;flex-wrap:wrap}
+.opts label{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--mut);padding:3px 9px;border:1px solid var(--line);border-radius:20px;cursor:pointer;user-select:none}
+.opts label:has(input:checked){color:var(--fg);background:var(--bg2)}
+.opts input{margin:0;accent-color:var(--acc)}
+#bar{position:absolute;left:0;right:0;bottom:-1px;height:2px;overflow:hidden;opacity:0;transition:opacity .15s}
+#bar::after{content:"";position:absolute;top:0;bottom:0;width:30%;background:var(--acc);animation:bar 1s ease-in-out infinite}
+body.loading #bar{opacity:1}
+@keyframes bar{from{left:-30%}to{left:100%}}
+main{flex:1;display:flex;min-height:0}
+.col{min-height:0;overflow:auto}
+#cats{width:210px;border-right:1px solid var(--line);display:none;flex-direction:column;background:var(--bg)}
+#cats .list{overflow:auto;flex:1;padding:2px 4px 8px}
+#cats input{flex:1;margin:8px 4px 6px 8px;padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg2)}
+#cats input:focus{outline:0;border-color:var(--acc)}
+.cat{padding:4px 8px;border-radius:6px;cursor:pointer;display:flex;justify-content:space-between;gap:6px}
+.cat:hover{background:var(--bg2)}.cat.sel{background:var(--sel);font-weight:600}
+.sub .cat{padding-left:22px;color:var(--mut)}.sub .cat.sel,.sub .cat:hover{color:var(--fg)}
+#results{flex:1;display:flex;flex-direction:column;min-width:0}
+#facets{display:flex;gap:8px;overflow-x:auto;padding:8px 8px 6px}#facets:empty{display:none}
+body.nofilters #facets{display:none}
+.fcol{flex:0 0 190px;min-width:0;width:190px;border:1px solid var(--line);border-radius:8px;display:flex;flex-direction:column;height:156px;background:var(--bg)}
+.fcol .fh{font-size:11.5px;font-weight:600;padding:5px 8px 3px;display:flex;justify-content:space-between}
+.fcol .fh .n{color:var(--selbar)}
+.fcol input{margin:0 6px 4px;padding:3px 7px;border:1px solid var(--line);border-radius:6px;background:var(--bg2);font-size:12px;min-width:0}
+.fcol input:focus{outline:0;border-color:var(--acc)}
+.fcol .vals{overflow:auto;flex:1;padding:0 3px 4px}
+.fv{padding:2px 6px;border-radius:5px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;user-select:none}
+.fv:hover{background:var(--bg2)}.fv.on{background:var(--sel);color:var(--selbar);font-weight:600}
+#fbar{display:flex;gap:6px;align-items:center;padding:6px 8px;border-bottom:1px solid var(--line)}
+#fbar .grow{flex:1}#fbar{flex-wrap:wrap}
+.sortseg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.sortseg button{border:0;background:var(--bg);padding:3px 10px;font-size:12px;cursor:pointer;color:var(--mut)}
+.sortseg button+button{border-left:1px solid var(--line)}
+.sortseg button:hover{background:var(--bg2)}.sortseg button.on{background:var(--acc2);color:var(--fg);font-weight:600}
+.switch{display:inline-flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;user-select:none;margin-left:4px}
+.switch input{display:none}
+.switch span{width:28px;height:16px;border-radius:8px;background:var(--bg3);border:1px solid var(--line);position:relative;transition:background .15s}
+.switch span::after{content:"";position:absolute;top:1px;left:1px;width:12px;height:12px;border-radius:50%;background:#fff;box-shadow:0 1px 2px #0004;transition:left .15s}
+.switch input:checked+span{background:var(--acc);border-color:var(--acc)}.switch input:checked+span::after{left:13px}#fbar .btn{font-size:12px;padding:3px 10px}
+#fbar .primary{padding:4px 12px;font-size:12px}
+#status{padding:5px 10px;color:var(--mut);font-size:12px;border-bottom:1px solid var(--line)}
+#list{flex:1;overflow:auto;transition:opacity .15s}
+body.dim #list{opacity:.55}
+.part{display:grid;grid-template-columns:84px minmax(0,1fr) 140px 112px;gap:12px;padding:10px 12px;border-bottom:1px solid var(--line);cursor:pointer}
+.part:hover{background:var(--bg2)}.part.sel{background:var(--sel);box-shadow:inset 3px 0 var(--selbar)}
+.part .img img,.part .noimg{width:84px;height:84px;object-fit:contain;background:#fff;border-radius:6px;display:block}
+.noimg{background:var(--bg3)}
+.part .info{min-width:0;display:flex;flex-direction:column;gap:4px}
+.part .info .mpn{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.part .meta{color:var(--mut);font-size:12px;display:flex;gap:4px 12px;flex-wrap:wrap}
+.part .meta b{font-weight:500;color:var(--fg)}
+.part .cat2{color:var(--mut);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.specs{display:flex;gap:3px;flex-wrap:wrap;max-height:44px;overflow:hidden}
+.sp{font-size:11.5px;padding:0 6px;border-radius:5px;background:var(--bg2);border:1px solid var(--line);white-space:nowrap}
+.sp:first-child{font-weight:600}
+.part .tiers{font-size:12px;font-variant-numeric:tabular-nums;display:grid;grid-template-columns:auto auto;gap:1px 8px;align-content:start;justify-content:start}
+.part .tiers span:nth-child(odd){color:var(--mut);text-align:right}.part .tiers span:nth-child(even){color:var(--warn)}
+.part .side{display:flex;flex-direction:column;align-items:flex-end;gap:6px;font-size:12px}
+.part .side .stk{color:var(--mut)}.part .side .stk b{color:var(--fg);font-weight:600;font-variant-numeric:tabular-nums}
+.rowplace{border:0;background:var(--acc);color:var(--accfg);border-radius:7px;padding:5px 18px;font-weight:600;cursor:pointer;margin-top:auto}
+.rowplace:hover{filter:brightness(1.07)}.rowplace:disabled{opacity:.4;cursor:default;filter:none}
+.lnk{font-size:12px}
+.p1{display:none}
+#results{container-type:inline-size}
+@container (max-width:640px){.part{grid-template-columns:64px minmax(0,1fr) 96px}.part .tiers{display:none}.p1{display:block}.part .img img,.part .noimg{width:64px;height:64px}}
+@container (max-width:430px){.part{grid-template-columns:minmax(0,1fr) 88px}.part .img{display:none}}
+.mpn{font-weight:600}
+.tag{font-size:10.5px;padding:1px 6px;border-radius:9px;background:var(--bg3);color:var(--mut);white-space:nowrap;font-weight:500;vertical-align:1px}
+.tag.basic{background:var(--acc2);color:var(--acc)}
+.stock0{color:var(--warn)}
+.skel{height:105px;margin:0;border-top:1px solid var(--line);background:linear-gradient(90deg,transparent,var(--bg2),transparent) 0 0/200% 100%;animation:sk 1.2s linear infinite}
+@keyframes sk{to{background-position:-200% 0}}
+#sentinel{height:40px;display:flex;align-items:center;justify-content:center}
+#detail{display:none;position:fixed;inset:0;z-index:15;background:#0006;align-items:center;justify-content:center;padding:14px}
+body.showdetail #detail{display:flex}
+.dlg{background:var(--bg);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);width:min(820px,100%);max-height:100%;display:flex;flex-direction:column;overflow:hidden}
+.dhead{padding:10px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center}
+.dhead .place{border:0;padding:0;background:none}
+.dhead .mpn{font-size:15px}
+.dbody{flex:1;overflow:auto;padding:10px}
+.pv{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
+.dcols{display:grid;grid-template-columns:1fr 220px;gap:14px}
+@media (max-width:640px){.dcols{grid-template-columns:1fr}.pv{grid-template-columns:1fr}}
+.pvbox{border:1px solid var(--line);border-radius:10px;height:240px;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative;cursor:zoom-in}
+.pvbox.sym{background:var(--pv)}.pvbox.fp{background:var(--pvfp)}
+.pvbox img{max-width:100%;max-height:100%}
+.pvbox svg{display:block;animation:fade .2s}
+@keyframes fade{from{opacity:0}}
+.pvbox .lbl{position:absolute;left:7px;top:6px;font-size:11px;color:#888;display:flex;gap:5px;align-items:center;z-index:1}
+.pvbox.big{position:fixed;inset:12px;height:auto;z-index:20;cursor:zoom-out;box-shadow:var(--shadow)}
+.photo{width:100%;max-height:150px;object-fit:contain;background:#fff;border-radius:10px;margin-bottom:10px}
+table{border-collapse:collapse;width:100%;margin-bottom:8px}
+td{padding:4px 4px;border-bottom:1px solid var(--line);vertical-align:top}
+td:first-child{color:var(--mut);width:42%}
+h4{margin:12px 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut)}
+.place{background:var(--bg);border-top:1px solid var(--line);padding:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.split{position:relative;display:inline-flex}
+.split #placebtn{border-radius:8px 0 0 8px;min-width:90px}
+.split #placemenu{border-radius:0 8px 8px 0;border-left:1px solid #fff5;padding:8px 9px}
+.menu{position:absolute;top:calc(100% + 6px);right:0;z-index:10;background:var(--bg);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:4px;min-width:270px}
+.menu button{display:block;width:100%;text-align:left;background:none;border:0;border-radius:7px;padding:7px 10px;cursor:pointer}
+.menu button:hover{background:var(--bg2)}.menu button small{color:var(--mut);display:block}
+.seg{display:inline-flex;border:1px solid #ccc;border-radius:6px;overflow:hidden;background:#fff}
+.seg button{border:0;background:#fff;color:#666;font-size:10.5px;padding:1px 7px;cursor:pointer}.seg button.on{background:#1f883d;color:#fff}
+.lbl select{font-size:11px;color:#333;background:#fff;border:1px solid #ccc;border-radius:5px}
+.spin{display:inline-block;width:13px;height:13px;border:2px solid var(--mut);border-top-color:transparent;border-radius:50%;animation:s .8s linear infinite;vertical-align:-2px}
+@keyframes s{to{transform:rotate(360deg)}}
+/* wide panel: categories beside the list; narrow: categories as overlay */
+@media (min-width:900px){#cats{display:flex}#catbtn{display:none}#catclose{display:none}}
+@media (max-width:899px){body.showcats #cats{display:flex;position:fixed;inset:0;width:auto;z-index:10;background:var(--bg)}}
+</style></head><body>
+<header>
+ <div class="row">
+  <button class="btn" id="catbtn" title="Categories">☰</button>
+  <div class="search"><svg width="14" height="14" viewBox="0 0 16 16"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M11 11l4 4" stroke="currentColor" stroke-width="2"/></svg><input id="q" type="search" placeholder="Search LCSC: C2040, CL10A106, 10uF 0603, ESP32…" autocomplete="off"></div>
+ </div>
+ <div class="crumb" id="crumb"></div>
+ <div class="opts">
+  <label><input type="checkbox" id="basic"> JLCPCB basic</label>
+  <label><input type="checkbox" id="placeable" checked> has symbol+footprint</label>
+  <label><input type="checkbox" id="m3d" checked> 3D model</label>
+ </div>
+ <div id="bar"></div>
+</header>
+<main>
+ <section id="cats" class="col">
+  <div class="row"><input id="catq" type="search" placeholder="Filter categories" style="flex:1"><button class="btn" id="catclose" title="Close">✕</button></div>
+  <div class="list" id="catlist"><div class="cat mut">Loading…</div></div>
+ </section>
+ <section id="results">
+  <div id="fbar" hidden><button class="btn" id="ftoggle"></button>
+   <span class="sortseg" id="sort"><button data-s="">Best match</button><button data-s="stock">Stock</button><button data-s="price">Price ↑</button><button data-s="price-desc">Price ↓</button></span>
+   <label class="switch"><input type="checkbox" id="stock" checked><span></span>In stock</label>
+   <span class="grow"></span><button class="btn" id="fclear">Clear filters</button></div>
+  <div id="facets"></div>
+  <div id="status">Search or pick a category.</div>
+  <div id="list"></div>
+ </section>
+ <section id="detail">
+  <div class="dlg"><div class="dhead"><div style="flex:1;min-width:0"><div class="mpn" id="dtitle">Select a part</div><div class="mut" id="dsub"></div></div>
+   <div class="place"><span class="split"><button class="primary" id="placebtn" disabled>Place</button><button class="primary" id="placemenu" disabled aria-label="More placement options" title="Place with KiCad's or EasyEDA's symbol">&#9662;</button><div class="menu" id="pmenu" hidden></div></span></div><button class="btn" id="back" title="Close (Esc)">✕</button></div>
+  <div id="pstat" class="mut" style="padding:0 10px"></div>
+  <div class="dbody" id="dbody"><p class="mut">Click a part to see its symbol, footprint, specs and prices. Double-click places it.</p></div></div>
+ </section>
+</main>
+<script>
+"use strict";
+// ---------------- KiCad remote symbol RPC (version 1) ----------------
+let session = null, msgId = 0;
+const pending = {};
+window.kiclient = { postMessage(text) {
+  let m; try { m = JSON.parse(text); } catch (e) { return; }
+  if (m.command === 'NEW_SESSION' && m.response_to === undefined) { session = m.session_id; return; }
+  if (m.error_code === 'SESSION_MISMATCH' && m.session_id) session = m.session_id;  // KiCad's current one (see joinSession)
+  const p = pending[m.response_to]; if (!p) return; delete pending[m.response_to];
+  m.status === 'OK' ? p.ok(m) : p.fail(Object.assign(new Error(m.error_message || m.error_code || 'KiCad error'), {code: m.error_code}));
+}};
+function toKicad(text) {
+  if (window.kicad && window.kicad.postMessage) return window.kicad.postMessage(text);
+  const wk = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.kicad;
+  if (wk) return wk.postMessage(text);
+  if (window.chrome && window.chrome.webview) return window.chrome.webview.postMessage(text);
+  throw new Error('Open this page from KiCad: schematic editor → View → Panels → Remote Symbols.');
+}
+// KiCad sends the session id once per page load, and at its startup that message can reach the page before it is
+// ready (lost). Every error reply carries KiCad's current session id, so a message with a made-up id is answered
+// with SESSION_MISMATCH and the real one: the page joins the session without a reload.
+async function joinSession() {
+  if (session) return;
+  const id = ++msgId;
+  const got = new Promise(ok => { pending[id] = {ok, fail: ok}; setTimeout(ok, 1500); });
+  try { toKicad(JSON.stringify({version: 1, session_id: 'join', message_id: id, command: 'GET_KICAD_VERSION', parameters: {}})); }
+  catch (e) { delete pending[id]; return; }
+  await got; delete pending[id];
+}
+setTimeout(joinSession, 800);  // KiCad's own handshake normally arrives within milliseconds of the load
+async function rpc(command, parameters, data, retried) {
+  await joinSession();
+  try { return await send(command, parameters, data); }
+  catch (e) {  // KiCad started a new session meanwhile: the error told us its id
+    if (retried || e.code !== 'SESSION_MISMATCH') throw e;
+    return rpc(command, parameters, data, true);
+  }
+}
+function send(command, parameters, data) {
+  return new Promise((ok, fail) => {
+    if (!session) return fail(new Error('Not connected to KiCad (close and reopen the Remote Symbols panel).'));
+    const id = ++msgId; pending[id] = {ok, fail};
+    const env = {version: 1, session_id: session, message_id: id, command, parameters: parameters || {}};
+    if (data !== undefined) env.data = data;
+    try { toKicad(JSON.stringify(env)); } catch (e) { delete pending[id]; fail(e); }
+    setTimeout(() => { if (pending[id]) { delete pending[id]; fail(new Error('KiCad did not answer.')); } }, 180000);
+  });
+}
+// ---------------- helpers ----------------
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = n => Number(n || 0).toLocaleString();
+const price = v => '$' + (+v < 1 ? (+v).toFixed(4) : (+v).toFixed(2));
+const store = { get(k, d) { try { const v = localStorage.getItem('lcsc.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+                set(k, v) { try { localStorage.setItem('lcsc.' + k, JSON.stringify(v)); } catch (e) {} } };
+async function getJSON(url, opts) {
+  const r = await fetch(url, opts); let j; try { j = await r.json(); } catch (e) { throw new Error('HTTP ' + r.status); }
+  if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status)); return j;
+}
+function status(html, err) { const s = $('#status'); s.innerHTML = html; s.className = err ? 'err' : ''; }
+// ---------------- state ----------------
+const st = { sort: store.get('sort', ''), q: '', catalog: '', catName: '', filters: {}, page: 1, total: 0, parts: [], facets: [], seq: 0, sel: null, open: null };
+['stock', 'basic', 'placeable', 'm3d'].forEach(k => { $('#' + k).checked = store.get(k, $('#' + k).checked); });
+// ---------------- categories ----------------
+let tree = [];
+async function loadCats() {
+  try { tree = await getJSON('/api/categories'); renderCats(); }
+  catch (e) { $('#catlist').innerHTML = `<div class="cat err">${esc(e.message)}</div>`; }
+}
+function renderCats() {
+  const f = $('#catq').value.trim().toLowerCase(), open = st.open;
+  let h = `<div class="cat ${!st.catalog ? 'sel' : ''}" data-id="" data-name="">All parts</div>`;
+  for (const c of tree) {
+    const kids = c.children.filter(s => !f || s.name.toLowerCase().includes(f) || c.name.toLowerCase().includes(f));
+    if (f && !kids.length && !c.name.toLowerCase().includes(f)) continue;
+    const expanded = f || open === c.id || c.children.some(s => String(s.id) === st.catalog);
+    h += `<div class="cat ${String(c.id) === st.catalog ? 'sel' : ''}" data-id="${c.id}" data-name="${esc(c.name)}" data-parent="1"><span>${esc(c.name)}</span><span class="mut">${expanded ? '▾' : '▸'}</span></div>`;
+    if (expanded) h += '<div class="sub">' + kids.map(s =>
+      `<div class="cat ${String(s.id) === st.catalog ? 'sel' : ''}" data-id="${s.id}" data-name="${esc(s.name)}">${esc(s.name)}</div>`).join('') + '</div>';
+  }
+  $('#catlist').innerHTML = h;
+}
+$('#catlist').addEventListener('click', e => {
+  const el = e.target.closest('.cat'); if (!el || el.dataset.id === undefined) return;
+  if (el.dataset.parent && st.open !== Number(el.dataset.id) && !$('#catq').value) { st.open = Number(el.dataset.id); }
+  setCategory(el.dataset.id, el.dataset.name);
+});
+$('#catq').addEventListener('input', renderCats);
+// hovering a category starts its search, so the click usually shows it at once
+let catT = null;
+$('#catlist').addEventListener('mouseover', e => {
+  const el = e.target.closest('.cat'); clearTimeout(catT); if (!el || !el.dataset.id) return;
+  catT = setTimeout(() => fetch(searchURL(el.dataset.id, {}, 1) + '&pre=1').catch(() => {}), 150);
+});
+$('#catbtn').onclick = () => document.body.classList.add('showcats');
+$('#catclose').onclick = () => document.body.classList.remove('showcats');
+function setCategory(id, name) {
+  st.catalog = id || ''; st.catName = name || ''; st.filters = {};
+  document.body.classList.remove('showcats'); renderCats(); search(1);
+}
+// ---------------- search ----------------
+let timer = null;
+$('#q').addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => { st.q = $('#q').value.trim(); search(1); }, 250); });
+$('#q').addEventListener('keydown', e => { if (e.key === 'Enter') { clearTimeout(timer); st.q = $('#q').value.trim(); search(1); } });
+['stock', 'basic', 'placeable'].forEach(k => $('#' + k).onchange = () => { store.set(k, $('#' + k).checked); renderList(); });
+$('#m3d').onchange = () => store.set('m3d', $('#m3d').checked);
+async function search(page, quick) {
+  const my = ++st.seq; st.page = page;
+  if (page === 1) store.set('last', {q: st.q, cat: st.catalog, catName: st.catName, f: st.filters});  // reopened panel starts here
+  renderCrumb();
+  if (!st.q && !st.catalog && !(st.filters.Category || []).length) { st.parts = []; st.facets = []; renderFacets(); renderList(); status('Search or pick a category.'); return; }
+  // keep the current results on screen (dimmed, progress bar) instead of blanking the list
+  document.body.classList.add('loading'); document.body.classList.toggle('dim', page === 1 && !quick);
+  if (page === 1 && !st.parts.length) $('#list').innerHTML = '<div class="skel"></div>'.repeat(8);
+  if (page === 1 && st.parts.length) status(`${fmt(st.total)} parts · updating…`);
+  try {
+    const u = searchURL(st.catalog, st.filters, page);
+    const r = await getJSON(u);
+    if (my !== st.seq) return;
+    if (r.catalog && r.catalog !== st.catalog) {  // a Category facet switched us into that category
+      st.catalog = r.catalog; st.catName = (st.filters.Category || []).join(', '); delete st.filters.Category; renderCats();
+    }
+    st.total = r.total; st.facets = r.facets;
+    const seen = new Set(page === 1 ? [] : st.parts.map(p => p.code));
+    const fresh = r.parts.filter(p => !seen.has(p.code) && seen.add(p.code));
+    st.parts = page === 1 ? fresh : st.parts.concat(fresh);
+    if (page > 1 && !fresh.length) st.total = st.parts.length;  // nothing new: stop loading more
+    renderCrumb(); if (page === 1) renderFacets(); renderList();  // later pages keep half-picked filters
+    if (page === 1 && !quick) $('#list').scrollTop = 0;
+    if (r.age > 600) refresh(u, my);
+    if (st.parts.length < st.total) fetch(searchURL(st.catalog, st.filters, page + 1) + '&pre=1').catch(() => {});  // warm the next page
+  } catch (e) { if (my === st.seq) { status(esc(e.message), true); if (!st.parts.length) $('#list').innerHTML = ''; } }
+  if (my === st.seq) {
+    document.body.classList.remove('loading', 'dim');
+    const m = $('#sentinel'); if (m) { more.unobserve(m); more.observe(m); }  // still in view (e.g. all hidden by "In stock"): load on
+  }
+}
+// an answer from the cache is shown at once; this brings its stock and prices up to date without moving the list
+async function refresh(u, my) {
+  try {
+    const r = await getJSON(u + '&fresh=1');
+    if (my !== st.seq) return;
+    const now = new Map(r.parts.map(p => [p.code, p]));
+    st.parts = st.parts.map(p => now.has(p.code) ? Object.assign(p, {stock: now.get(p.code).stock, prices: now.get(p.code).prices, cls: now.get(p.code).cls}) : p);
+    const top = $('#list').scrollTop; renderList(); $('#list').scrollTop = top;
+  } catch (e) {}
+}
+function searchURL(catalog, filters, page) {
+  return '/api/search?' + new URLSearchParams({ q: st.q, catalog, page, f: JSON.stringify(filters), sort: st.sort });
+}
+function renderCrumb() {
+  const chips = [];
+  if (st.catalog) chips.push(`<span class="chip"><b>Category</b> ${esc(st.catName || st.catalog)}<button data-k="__cat">×</button></span>`);
+  for (const [k, vs] of Object.entries(st.filters)) for (const v of vs)
+    chips.push(`<span class="chip"><b>${esc(k)}</b> ${esc(v)}<button data-k="${esc(k)}" data-v="${esc(v)}">×</button></span>`);
+  if (chips.length > 1) chips.push('<button class="btn" data-k="__all" style="padding:1px 8px;font-size:12px">clear all</button>');
+  $('#crumb').innerHTML = chips.join('');
+}
+$('#crumb').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const k = b.dataset.k;
+  if (k === '__cat') { st.catalog = ''; st.catName = ''; st.filters = {}; renderCats(); }
+  else if (k === '__all') { st.catalog = ''; st.catName = ''; st.filters = {}; renderCats(); }
+  else { st.filters[k] = (st.filters[k] || []).filter(v => v !== b.dataset.v); if (!st.filters[k].length) delete st.filters[k]; }
+  search(1);
+});
+// ---------------- facets (parametric filters): one list per parameter, a click applies it ----------------
+let draft = {}, fTimer = null;  // picks made within a moment go out as one search
+function renderFacets() {
+  // picks made while a search was running stay (their own search follows), and so does each list's scroll and text
+  if (!fTimer) draft = JSON.parse(JSON.stringify(st.filters));
+  const keep = {};
+  document.querySelectorAll('.fcol').forEach(c => { keep[c.dataset.name] = [c.querySelector('input').value, c.querySelector('.vals').scrollTop]; });
+  $('#fbar').hidden = !st.facets.length && !st.parts.length;
+  $('#facets').innerHTML = st.facets.map((f, i) => `<div class="fcol" data-i="${i}" data-name="${esc(f.name)}"><div class="fh"><span>${esc(f.name)}</span><span class="n"></span></div>
+    <input type="search" placeholder="Filter" value="${esc((keep[f.name] || [''])[0])}"><div class="vals">${valsHTML(f, (keep[f.name] || [''])[0])}</div></div>`).join('');
+  document.querySelectorAll('.fcol').forEach(c => { if (keep[c.dataset.name]) c.querySelector('.vals').scrollTop = keep[c.dataset.name][1]; });
+  syncFacets();
+}
+function valsHTML(f, filter) {
+  const sel = new Set(draft[f.name] || []);
+  // picked values stay listed even when the narrowed results no longer offer them
+  const all = [...[...sel].filter(v => !f.values.includes(v)), ...sortVals(f.values)];
+  const vals = all.filter(v => !filter || v.toLowerCase().includes(filter.toLowerCase()));
+  return vals.map(v => `<div class="fv ${sel.has(v) ? 'on' : ''}" title="${esc(v)}" data-v="${esc(v)}">${esc(v)}</div>`).join('')
+    || '<div class="mut" style="padding:2px 6px;font-size:12px">nothing</div>';
+}
+function syncFacets() {
+  document.querySelectorAll('.fcol').forEach(c => { const n = (draft[st.facets[+c.dataset.i].name] || []).length; c.querySelector('.n').textContent = n || ''; });
+  $('#fclear').disabled = !Object.keys(st.filters).length && !Object.values(draft).some(v => v.length);
+  const hide = store.get('nofilters', false); document.body.classList.toggle('nofilters', hide);
+  const n = Object.values(st.filters).reduce((a, v) => a + v.length, 0);
+  $('#ftoggle').textContent = (hide ? '▸ ' : '▾ ') + 'Filters' + (n ? ` (${n})` : '');
+}
+// numeric-aware sort: 100nF before 1uF, 6.3V before 10V
+const MULT = {p:1e-12,n:1e-9,u:1e-6,'µ':1e-6,m:1e-3,k:1e3,K:1e3,M:1e6,G:1e9};
+function numVal(s) { const m = /^[±+-]?\s*([\d.]+)\s*([pnuµmkKMG]?)/.exec(s); return m ? parseFloat(m[1]) * (MULT[m[2]] || 1) : NaN; }
+function sortVals(vs) {
+  const nums = vs.filter(v => !isNaN(numVal(v)));
+  if (nums.length < vs.length * 0.7) return vs;
+  return vs.slice().sort((a, b) => (numVal(a) || 0) - (numVal(b) || 0));
+}
+// a facet's value on a loaded part, when the part says (undefined: can't tell, keep the part)
+const SPEC_OF = {Capacitance: 'Value', Resistance: 'Value', Inductance: 'Value'};
+function facetVal(p, name) {
+  if (name === 'Package') return p.package;
+  if (name === 'Manufacturer') return p.manufacturer;
+  const sp = (p.specs || []).find(([k]) => k === name || k === SPEC_OF[name]);
+  return sp ? sp[1] : undefined;
+}
+const sameVal = (a, b) => { a = String(a).toLowerCase(); b = String(b).toLowerCase(); return a === b || a.startsWith(b + '(') || b.startsWith(a + '('); };
+function applyFilters() {
+  fTimer = null;
+  st.filters = Object.fromEntries(Object.entries(draft).filter(e => e[1].length));
+  // narrow the loaded parts at once; LCSC's answer replaces them a moment later
+  const fs = Object.entries(st.filters).filter(([k]) => k !== 'Category');
+  st.parts = st.parts.filter(p => fs.every(([k, vs]) => { const v = facetVal(p, k); return v === undefined || vs.some(x => sameVal(v, x)); }));
+  renderList(); search(1, true);
+}
+$('#facets').addEventListener('click', e => {
+  const v = e.target.closest('.fv'); if (!v) return;
+  const name = st.facets[+v.closest('.fcol').dataset.i].name, cur = new Set(draft[name] || []);
+  cur.has(v.dataset.v) ? cur.delete(v.dataset.v) : cur.add(v.dataset.v);
+  draft[name] = [...cur]; v.classList.toggle('on'); syncFacets();
+  clearTimeout(fTimer); fTimer = setTimeout(applyFilters, 250);
+});
+// hovering a filter value starts that search (with LCSC's narrowed lists for the other filters), so the click is instant
+let fvT = null;
+$('#facets').addEventListener('mouseover', e => {
+  const v = e.target.closest('.fv'); clearTimeout(fvT); if (!v) return;
+  fvT = setTimeout(() => {
+    const name = st.facets[+v.closest('.fcol').dataset.i].name, cur = new Set(draft[name] || []);
+    cur.has(v.dataset.v) ? cur.delete(v.dataset.v) : cur.add(v.dataset.v);
+    const f = Object.fromEntries(Object.entries(Object.assign({}, draft, {[name]: [...cur]})).filter(e => e[1].length));
+    fetch(searchURL(st.catalog, f, 1) + '&pre=1').catch(() => {});
+  }, 120);
+});
+$('#facets').addEventListener('input', e => {
+  const c = e.target.closest('.fcol'); if (!c) return;
+  c.querySelector('.vals').innerHTML = valsHTML(st.facets[+c.dataset.i], e.target.value);
+});
+$('#fclear').onclick = () => { clearTimeout(fTimer); fTimer = null; draft = {}; st.filters = {}; search(1); };
+$('#ftoggle').onclick = () => { store.set('nofilters', !store.get('nofilters', false)); syncFacets(); };
+// ---------------- result list ----------------
+const unit = p => p.prices[0] ? +p.prices[0].price : Infinity;
+const SORT = {stock: (a, b) => b.stock - a.stock, price: (a, b) => unit(a) - unit(b), 'price-desc': (a, b) => (unit(b) === Infinity ? -1 : unit(b)) - (unit(a) === Infinity ? -1 : unit(a))};
+function visible() {
+  const s = $('#stock').checked, b = $('#basic').checked, pl = $('#placeable').checked;
+  const rows = st.parts.filter(p => (!s || p.stock > 0) && (!b || p.cls === 'Basic Part') && (!pl || p.placeable));
+  // LCSC sorts category listings (roughly) across all pages; the loaded rows are put in exact order here
+  return st.sort ? rows.sort(SORT[st.sort]) : rows;
+}
+function syncSort() { document.querySelectorAll('#sort button').forEach(b => b.classList.toggle('on', b.dataset.s === st.sort)); }
+syncSort();
+$('#sort').onclick = e => {
+  const b = e.target.closest('button'); if (!b || b.dataset.s === st.sort) return;
+  st.sort = b.dataset.s; store.set('sort', st.sort); syncSort();
+  if (st.catalog) search(1); else renderList();
+};
+function renderList() {
+  const rows = visible();
+  const hidden = st.parts.length - rows.length;
+  if (st.parts.length || st.total) status(`${fmt(st.total)} parts${hidden ? ` · ${hidden} of the loaded ones hidden by the options` : ''}${st.sort && !st.catalog ? ` · sorted among the ${st.parts.length} loaded (pick a category to sort all)` : ''}`);
+  const sel = st.sel && st.sel.code;
+  $('#list').innerHTML = rows.map(p => `<div class="part ${sel === p.code ? 'sel' : ''}" data-code="${esc(p.code)}">
+    <div class="img">${p.image ? `<img src="${esc(p.image)}" alt="" loading="lazy">` : '<span class="noimg"></span>'}</div>
+    <div class="info"><div class="mpn" title="${esc(p.mpn)}">${esc(p.mpn)}${p.cls ? ` <span class="tag ${p.cls === 'Basic Part' ? 'basic' : ''}" title="JLCPCB assembly: ${esc(p.cls)}">${esc(p.cls.replace(' Part', ''))}</span>` : ''}</div>
+     <div class="meta"><span>Package <b>${esc(p.package || '–')}</b></span><span><b>${esc(p.code)}</b></span><span>${esc(p.manufacturer)}</span>${p.datasheet ? `<a class="lnk" href="#" data-open="${esc(p.code)}/datasheet">Datasheet</a>` : ''}</div>
+     <div class="specs">${(p.specs || []).map(([k, v]) => `<span class="sp" title="${esc(k)}">${esc(v)}</span>`).join('') || `<span class="mut">${esc(p.summary)}</span>`}</div>
+     <div class="cat2">${esc(p.category)}</div></div>
+    <div class="tiers">${p.prices.slice(0, 5).map(x => `<span>${fmt(x.qty)}+</span><span>${price(x.price)}</span>`).join('')}</div>
+    <div class="side"><span class="stk">Stock <b class="${p.stock ? '' : 'stock0'}">${fmt(p.stock)}</b></span>${p.prices[0] ? `<span class="p1">${price(p.prices[0].price)}</span>` : ''}
+     <button class="rowplace" ${p.placeable ? '' : 'disabled title="No EasyEDA symbol/footprint"'}>Place</button></div></div>`).join('') +
+   (st.parts.length < st.total ? '<div id="sentinel"><span class="spin"></span></div>' : '');
+  const m = $('#sentinel'); if (m) more.observe(m);
+}
+// next page when the end of the list scrolls into view
+const more = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting) && !document.body.classList.contains('loading') && st.parts.length < st.total) search(st.page + 1); }, {root: $('#list'), rootMargin: '300px'});
+// hovering a part starts converting it, so its detail view usually opens at once
+const warmed = new Set(); let hoverT = null;
+$('#list').addEventListener('mouseover', e => {
+  const r = e.target.closest('.part'); if (!r || warmed.has(r.dataset.code)) return;
+  clearTimeout(hoverT);
+  hoverT = setTimeout(() => { const p = st.parts.find(x => x.code === r.dataset.code); if (!p || !p.placeable) return; warmed.add(p.code); fetch('/api/prepare/' + p.code).catch(() => {}); }, 120);
+});
+$('#list').addEventListener('click', e => {
+  const r = e.target.closest('.part'); if (!r) return;
+  const p = st.parts.find(x => x.code === r.dataset.code), b = e.target.closest('.rowplace');
+  if (b) { if (p.placeable) place(p, store.get('symstyle', 'kicad') === 'easyeda', b); return; }
+  if (e.target.closest('a')) return;
+  openDetail(p);
+});
+$('#list').addEventListener('dblclick', e => {
+  const r = e.target.closest('.part'); if (!r || e.target.closest('.rowplace')) return;
+  const p = st.parts.find(x => x.code === r.dataset.code); if (p && p.placeable) place(p, useEasyeda(st.detail), r.querySelector('.rowplace'));
+});
+// ---------------- detail ----------------
+let dseq = 0;
+async function openDetail(p) {
+  const my = ++dseq; st.sel = p;
+  document.querySelectorAll('.part.sel').forEach(r => r.classList.remove('sel'));
+  const row = document.querySelector(`.part[data-code="${CSS.escape(p.code)}"]`); if (row) row.classList.add('sel');
+  document.body.classList.add('showdetail');
+  $('#dtitle').textContent = p.mpn; $('#dsub').innerHTML = [esc(p.code), esc(p.manufacturer), p.url ? `<a href="${esc(p.url)}" data-open="${esc(p.code)}/lcsc">LCSC page</a>` : ''].filter(Boolean).join(' · ');
+  st.detail = null; $('#pmenu').hidden = true;
+  $('#placebtn').disabled = $('#placemenu').disabled = !p.placeable; $('#pstat').textContent = p.placeable ? '' : 'No EasyEDA symbol/footprint for this part';
+  $('#dbody').innerHTML = `<div class="pv"><div class="pvbox sym"><span class="lbl">symbol</span>${p.placeable ? '<span class="spin"></span>' : ''}</div>
+    <div class="pvbox fp"><span class="lbl">footprint</span>${p.placeable ? '<span class="spin"></span>' : ''}</div></div>
+    <div class="dcols"><div id="dinfo"></div><div>${p.image_big ? `<img class="photo" src="${esc(p.image_big)}" alt="">` : ''}${priceTable(p)}</div></div>`;
+  if (!p.placeable) return;
+  try {
+    const d = await getJSON('/api/detail/' + p.code);
+    if (my !== dseq) return;
+    const t = Date.now();
+    st.detail = d;
+    symPreview(p, d, t);
+    document.querySelector('.pvbox.fp').innerHTML = `<span class="lbl">footprint</span>`;
+    loadSvg('.pvbox.fp', `/preview/${p.code}/footprint.svg?t=${t}`);
+    $('#dinfo').innerHTML = `<h4>Specs</h4><table>${d.specs.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${k === 'Datasheet' ? `<a href="${esc(v)}" data-open="${esc(d.code)}/datasheet">open</a>` : esc(v)}</td></tr>`).join('')}
+      <tr><td>KiCad symbol</td><td>${d.stock ? `standard ${esc(d.stock)} (pins mapped to the pads)` : 'converted from EasyEDA'} · ${d.pins} pins${d.units > 1 ? ' · ' + d.units + ' units' : ''}</td></tr>
+      <tr><td>KiCad footprint</td><td>${esc(d.footprint)}</td></tr><tr><td>3D model</td><td>${d.has_3d ? 'yes (STEP)' : 'no'}</td></tr></table>`;
+  } catch (e) { if (my === dseq) { $('#dinfo').innerHTML = `<p class="err">${esc(e.message)}</p>`; document.querySelectorAll('.pvbox .spin').forEach(s => s.remove()); } }
+}
+// symbol preview: KiCad's standard drawing or EasyEDA's (the choice is remembered and is what Place uses)
+function useEasyeda(d) { return !!(d && d.stock && store.get('symstyle', 'kicad') === 'easyeda'); }
+function symPreview(p, d, t) {
+  const ez = useEasyeda(d), n = ez ? d.units_easyeda : d.units, v = ez ? '&v=easyeda' : '';
+  const units = n > 1 ? `<select id="unit">${Array.from({length: n}, (_, i) => `<option value="${i + 1}">unit ${String.fromCharCode(65 + i)}</option>`).join('')}</select>` : '';
+  const seg = d.stock ? `<span class="seg"><button data-v="kicad" class="${ez ? '' : 'on'}" title="KiCad standard symbol ${esc(d.stock)}">KiCad</button><button data-v="easyeda" class="${ez ? 'on' : ''}" title="EasyEDA's own symbol">EasyEDA</button></span>` : '';
+  const box = document.querySelector('.pvbox.sym');
+  box.innerHTML = `<span class="lbl">symbol${seg} ${units}</span>`;
+  loadSvg('.pvbox.sym', `/preview/${p.code}/symbol.svg?t=${t || Date.now()}${v}`);
+  box.querySelectorAll('.seg button').forEach(b => b.onclick = e => { e.stopPropagation(); store.set('symstyle', b.dataset.v); symPreview(p, d); });
+  const u = $('#unit'); if (u) { u.onclick = e => e.stopPropagation(); u.onchange = () => loadSvg('.pvbox.sym', `/preview/${p.code}/symbol.svg?unit=${u.value}${v}`); }
+}
+// kicad-cli draws on a whole page: inline the SVG and crop its viewBox to the drawing
+async function loadSvg(sel, url) {
+  const box = document.querySelector(sel); if (!box) return;
+  try {
+    const r = await fetch(url); if (!r.ok) throw new Error();
+    const doc = new DOMParser().parseFromString(await r.text(), 'image/svg+xml');
+    const svg = document.importNode(doc.documentElement, true);
+    svg.querySelectorAll('rect').forEach(x => { if (+x.getAttribute('width') > 200) x.remove(); });  // page background
+    box.querySelectorAll('svg').forEach(x => x.remove());
+    svg.removeAttribute('width'); svg.removeAttribute('height');
+    svg.style.cssText = 'width:100%;height:100%';
+    box.appendChild(svg);
+    const b = svg.getBBox(), m = Math.max(b.width, b.height) * 0.06 + 0.5;
+    if (b.width && b.height) svg.setAttribute('viewBox', `${b.x - m} ${b.y - m} ${b.width + 2 * m} ${b.height + 2 * m}`);
+  } catch (e) { box.insertAdjacentHTML('beforeend', '<span class="mut">no preview</span>'); }
+}
+function priceTable(p) {
+  if (!p.prices.length) return '';
+  return `<h4>Price (USD) · stock ${fmt(p.stock)}</h4><table>${p.prices.map(x => `<tr><td>${fmt(x.qty)}+</td><td>$${esc(x.price)}</td></tr>`).join('')}</table>`;
+}
+$('#dbody').addEventListener('click', e => { const b = e.target.closest('.pvbox'); if (b && b.querySelector('svg')) b.classList.toggle('big'); });
+$('#back').onclick = () => document.body.classList.remove('showdetail');
+$('#detail').addEventListener('click', e => { if (e.target === $('#detail')) document.body.classList.remove('showdetail'); });
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  const big = document.querySelector('.pvbox.big'); if (big) { big.classList.remove('big'); return; }
+  document.body.classList.remove('showdetail', 'showcats');
+});
+// links open in the system browser (KiCad's panel would open them inside itself)
+document.addEventListener('click', e => {
+  const a = e.target.closest('a[data-open]'); if (!a) return;
+  e.preventDefault();
+  fetch('/api/open/' + a.dataset.open, {method: 'POST'}).catch(() => {});
+});
+// ---------------- place ----------------
+$('#placebtn').onclick = () => place(st.sel, useEasyeda(st.detail), $('#placebtn'));
+$('#placemenu').onclick = e => {
+  e.stopPropagation();
+  const m = $('#pmenu'), d = st.detail;
+  if (!m.hidden) { m.hidden = true; return; }
+  m.innerHTML = d && d.stock
+    ? `<button data-ez="0">Place with KiCad symbol<small>standard ${esc(d.stock)}, pins mapped to the pads</small></button>
+       <button data-ez="1">Place with EasyEDA symbol<small>the part's own drawing from the EasyEDA library</small></button>`
+    : `<button data-ez="1">Place<small>${d ? 'no KiCad standard symbol for this part: EasyEDA\'s drawing' : 'loading part…'}</small></button>`;
+  m.hidden = false;
+};
+$('#pmenu').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; $('#pmenu').hidden = true; place(st.sel, b.dataset.ez === '1', $('#placebtn')); });
+document.addEventListener('click', e => { if (!e.target.closest('.split')) $('#pmenu').hidden = true; });
+// b: the Place button pressed (row or dialog); progress goes to the dialog's line or the list's status line
+async function place(p, easyeda, b) {
+  if (!p) return;
+  const inDlg = b === $('#placebtn'), label = b.textContent;
+  const say = (html, err) => { if (inDlg) { $('#pstat').innerHTML = html; $('#pstat').className = err ? 'err' : 'mut'; } else status(html, err); };
+  b.disabled = true; if (!inDlg) b.innerHTML = '<span class="spin"></span>';
+  try {
+    say(`<span class="spin"></span> ${esc(p.mpn)}: preparing` + ($('#m3d').checked ? ' (incl. 3D model)' : '') + '…');
+    const man = await getJSON(`/api/manifest/${p.code}?3d=${$('#m3d').checked ? 1 : 0}${easyeda ? '&sym=easyeda' : ''}`);
+    say(`<span class="spin"></span> ${esc(p.mpn)}: KiCad is downloading…`);
+    // KiCad 10 fails the first save into a not-yet-existing remote library; the retry finds it
+    try { await rpc('PLACE_COMPONENT', man); }
+    catch (e) { if (!/save the downloaded symbol/i.test(e.message)) throw e; await rpc('PLACE_COMPONENT', man); }
+    say(`${esc(p.mpn)} is on the cursor: click in the schematic to place it.`);
+    document.body.classList.remove('showdetail');
+    fetch('/api/placed/' + p.code, {method: 'POST'}).catch(() => {});  // provider makes the project's library paths relative
+    getJSON('/api/close-panel', {method: 'POST'}).catch(e => say(`${esc(p.mpn)} is on the cursor. Couldn't close this panel: ${esc(e.message)}`, true));
+  } catch (e) { say(esc(e.message), true); }
+  b.disabled = false; b.textContent = label;
+}
+// start state from the URL (deep links): ?q=…&cat=<id>&f=<json>&code=C…
+(async () => {
+  await loadCats();
+  const P = new URLSearchParams(location.search);
+  if (P.get('cat')) { st.catalog = P.get('cat'); for (const c of tree) for (const x of [c, ...c.children]) if (String(x.id) === st.catalog) st.catName = x.name; renderCats(); }
+  try { st.filters = JSON.parse(P.get('f') || '{}'); } catch (e) {}
+  if (P.get('q')) { st.q = P.get('q'); $('#q').value = st.q; }
+  const last = !location.search && store.get('last', null);  // the panel opens where it was left
+  if (last) { st.q = last.q || ''; $('#q').value = st.q; st.catalog = last.cat || ''; st.catName = last.catName || ''; st.filters = last.f || {}; renderCats(); }
+  if (st.q || st.catalog) await search(1);
+  const code = P.get('code'); if (code) openDetail(st.parts.find(p => p.code === code) || {code, mpn: code, manufacturer: '', url: '', prices: [], placeable: true});
+})();
+$('#q').focus();
+</script></body></html>

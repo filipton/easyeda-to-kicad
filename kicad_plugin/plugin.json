@@ -1,0 +1,29 @@
+{
+  "$schema": "https://go.kicad.org/api/schemas/v1",
+  "identifier": "com.github.epro2kicad",
+  "name": "EasyEDA Pro to KiCad",
+  "description": "Translate EasyEDA Pro projects into native KiCad projects, and place LCSC parts from the Remote Symbols panel.",
+  "runtime": { "type": "exec" },
+  "actions": [
+    {
+      "identifier": "import-easyeda",
+      "name": "Import EasyEDA Pro project",
+      "description": "Translate an EasyEDA Pro project (.epro / .epro2 / .zip) into a KiCad project",
+      "show-button": true,
+      "scopes": ["schematic", "pcb"],
+      "entrypoint": "import_easyeda.sh",
+      "icons-light": ["icons/import_24.png", "icons/import_48.png"],
+      "icons-dark": ["icons/import_24.png", "icons/import_48.png"]
+    },
+    {
+      "identifier": "lcsc-parts",
+      "name": "LCSC parts",
+      "description": "Start the LCSC search for the Remote Symbols panel",
+      "show-button": true,
+      "scopes": ["schematic"],
+      "entrypoint": "lcsc_parts.sh",
+      "icons-light": ["icons/lcsc_24.png", "icons/lcsc_48.png"],
+      "icons-dark": ["icons/lcsc_24.png", "icons/lcsc_48.png"]
+    }
+  ]
+}
