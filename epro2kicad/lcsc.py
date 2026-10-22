@@ -44,6 +44,10 @@ class LcscError(Exception):
     pass
 
 
+class NotInLibrary(LcscError):
+    """The library answered that it has no such item (cached, unlike network errors)."""
+
+
 # --------------------------------------------------------------------------- fetching
 
 
@@ -120,9 +124,30 @@ def _cached(kind: str, key: str, fetch) -> bytes:
     return data
 
 
+def _known_missing(key: str) -> bool:
+    return os.path.exists(os.path.join(CACHE, "missing", re.sub(r"[^\w.-]", "_", key)))
+
+
+def _mark_missing(key: str) -> None:
+    try:
+        os.makedirs(os.path.join(CACHE, "missing"), exist_ok=True)
+        open(os.path.join(CACHE, "missing", re.sub(r"[^\w.-]", "_", key)), "w").close()
+    except OSError:
+        pass
+
+
 def fetch_component(uuid: str) -> dict:
+    if _known_missing(f"component-{uuid}"):
+        raise NotInLibrary(f"component {uuid} not found")
+
     def get():
-        res = _get(f"{API}/components/{uuid}")
+        try:
+            res = _get(f"{API}/components/{uuid}")
+        except LcscError as e:
+            if "not found" in str(e).lower():  # the library's answer, not a network problem
+                _mark_missing(f"component-{uuid}")
+                raise NotInLibrary(str(e)) from e
+            raise
         if not res:
             raise LcscError(f"component {uuid} not found")
         return json.dumps(res).encode()
@@ -131,11 +156,16 @@ def fetch_component(uuid: str) -> dict:
 
 def find_model(title: str) -> str:
     """uuid of the LCSC library's 3D model with exactly this title (models get new uuids over time, titles stay)."""
-    res = _get(f"{API}/components/search", {"wd": title, "docType": 16}) or {}
-    for c in (res.get("lists") or {}).get("lcsc") or []:
-        if c.get("docType") == 16 and (c.get("display_title") or "").lower() == title.lower():
-            return c["uuid"]
-    raise LcscError(f"3D model '{title}' not in the library")
+    def get():
+        res = _get(f"{API}/components/search", {"wd": title, "docType": 16}) or {}
+        for c in (res.get("lists") or {}).get("lcsc") or []:
+            if c.get("docType") == 16 and (c.get("display_title") or "").lower() == title.lower():
+                return c["uuid"].encode()
+        return b""  # no such model: remembered too
+    uuid = _cached("model-search", title.lower(), get).decode()
+    if not uuid:
+        raise NotInLibrary(f"3D model '{title}' not in the library")
+    return uuid
 
 
 def fetch_model(model_id: str) -> bytes:
