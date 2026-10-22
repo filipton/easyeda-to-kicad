@@ -3,10 +3,12 @@ libraries into a format-independent ``Project`` object."""
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 import os
 import zipfile
+from collections import Counter
 from dataclasses import dataclass, field
 
 from .records import (Rec, assemble_v3_wires, assign_v2_parts, flip_v3_sch_y, norm_v2_pcb, norm_v2_sch, norm_v3,
@@ -185,8 +187,46 @@ def _load_v2(zf: zipfile.ZipFile, names: list[str], pj_name: str) -> Project:
             for arr in _read_lines(zf.read(n)):
                 if isinstance(arr, list) and arr and arr[0] == "BLOB" and len(arr) > 3:
                     proj.blobs[str(arr[1])] = str(arr[3])
+        elif n.startswith(prefix + "FONT/") and n.endswith(".efon"):
+            try:
+                pcb = base64.b64decode(n[len(prefix) + 5:-5]).decode().rsplit("_", 1)[0]
+            except ValueError:
+                continue
+            if pcb in proj.pcbs:
+                proj.pcbs[pcb].meta.setdefault("ttf", {}).update(_ttf_boxes(_read_lines(zf.read(n))))
     _add_orphan_boards(proj)
     return proj
+
+
+def ttf_key(text: str, family: str, font_size: float) -> str:
+    return f"{text}\0{family}\0{round(font_size / 10)}"
+
+
+def _ttf_boxes(lines) -> dict:
+    """EasyEDA's rendering of TrueType texts (FONT/<pcb>_0.efon): key -> (x0, x1, baseline, top, box w, box h), mil.
+
+    Version 1.4 records are keyed by the text's record id, 1.6 ones by text, font and size (see ttf_key).  The
+    outlines are in mil/10, Y up, from the bottom-left corner of the text box (box height = 1.2 x fontSize)."""
+    out = {}
+    for arr in lines:
+        if not (isinstance(arr, list) and len(arr) >= 5 and arr[0] == "FONT" and isinstance(arr[-1], list)):
+            continue
+        if len(arr) >= 12:  # 1.6: text, family, size/10, ..., box w, box h, outlines
+            key, w, h = f"{arr[1]}\0{arr[2]}\0{arr[3]}", arr[-3], arr[-2]
+        else:  # 1.4: record id, box w, box h, outlines
+            key, w, h = str(arr[1]), arr[2], arr[3]
+        boxes = []
+        for c in arr[-1]:
+            nums = [v for v in c if isinstance(v, (int, float))]
+            if len(nums) >= 4:
+                boxes.append((min(nums[0::2]) * 10, max(nums[0::2]) * 10, min(nums[1::2]) * 10, max(nums[1::2]) * 10))
+        if not boxes:
+            continue
+        # baseline: where most outlines end (descenders and inner contours don't)
+        base = Counter(round(b[2]) for b in boxes).most_common(1)[0][0]
+        out[key] = (min(b[0] for b in boxes), max(b[1] for b in boxes), float(base), max(b[3] for b in boxes),
+                    float(w), float(h))
+    return out
 
 
 # ---------------------------------------------------------------------------

@@ -709,14 +709,16 @@ def convert_footprint(doc, lm: L.LayerMap | None = None, opts: FpOptions | None 
             layer = lm.to_kicad(r.int("layerId"))
             if not layer or not r.str("text"):
                 continue
-            x, y, w, h = textfit.fit(r.str("text"), r.num("x"), r.num("y"), r.num("angle"), r.str("origin"),
-                                     r.num("fontSize", 45), r.num("strokeWidth", 6), layer.startswith("B."))
+            ff = r.str("fontFamily", "default")
+            if ff and ff != "default":
+                x, y, w, h = textfit.fit_ttf(r.str("text"), r.num("x"), r.num("y"), r.num("angle"), r.str("origin"),
+                                             r.num("fontSize", 45), layer.startswith("B."))
+            else:
+                x, y, w, h = textfit.fit(r.str("text"), r.num("x"), r.num("y"), r.num("angle"), r.str("origin"),
+                                         r.num("fontSize", 45), r.num("strokeWidth", 6), layer.startswith("B."))
             t = Text("user", r.str("text"), kpt((x, y), origin), norm_deg(r.num("angle")), layer,
                      (rnd(w * MIL, 4), rnd(h * MIL, 4)), max(0.05, mm(r.num("strokeWidth", 6))), ("", ""),
                      mirror=layer.startswith("B."), knockout=r.bool("reverse"))
-            ff = r.str("fontFamily", "default")
-            if ff and ff != "default":
-                t.face = ff
             fp.texts.append(t)
         elif r.type == "REGION":
             layer = lm.to_kicad(r.int("layerId"))

@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass, field
 
 from .. import geom
-from ..easyeda.project import Doc, Project
+from ..easyeda.project import Doc, Project, ttf_key
 from ..easyeda.records import Rec
 from ..easyeda.rules import Rules, parse_rules
 from ..sexp import NO, YES, Sym, loads, stable_uuid
@@ -416,6 +416,17 @@ class BoardConverter:
         return footprint_board_sexp(fp, lib_id, pos, kangle, back, uid, path, sheetname, sheetfile, props, attr,
                                     locked=bool(c.d.get("locked")))
 
+    def _fit_text(self, r: Rec, text: str, angle: float, back: bool):
+        """textfit for a STRING / ATTR record: Hershey stroke font, or a TrueType font (EasyEDA's rendering of it
+        from the project if there is one)."""
+        font = r.str("fontFamily", "default") or "default"
+        if font == "default":
+            return textfit.fit(text, r.num("x"), r.num("y"), angle, r.str("origin"), r.num("fontSize", 45),
+                               r.num("strokeWidth", 6), back)
+        boxes = self.doc.meta.get("ttf") or {}
+        box = boxes.get(r.id) or boxes.get(ttf_key(text, font, r.num("fontSize", 45)))
+        return textfit.fit_ttf(text, r.num("x"), r.num("y"), angle, r.str("origin"), r.num("fontSize", 45), back, box)
+
     def _place_field(self, t: Text, ar: Rec, pos, fp_angle: float, fp_back: bool):
         """Position a footprint field from an absolute EasyEDA ATTR record."""
         visible = bool(ar.d.get("valueVisible")) and ar.d.get("x") is not None
@@ -430,8 +441,7 @@ class BoardConverter:
         shown = ar.str("value") or t.text
         if ar.d.get("keyVisible"):
             shown = f"{ar.str('key')}:{shown}"
-        x, y, w, h = textfit.fit(shown, ar.num("x"), ar.num("y"), ar.num("angle"), ar.str("origin"),
-                                 ar.num("fontSize", 45), ar.num("strokeWidth", 6), layer.startswith("B."))
+        x, y, w, h = self._fit_text(ar, shown, ar.num("angle"), layer.startswith("B."))
         absp = self.P(x, y)
         rel = (absp[0] - pos[0], absp[1] - pos[1])
         local = krot(rel, -fp_angle)
@@ -803,8 +813,7 @@ class BoardConverter:
             layer = "Cmts.User"
         back = layer.startswith("B.")
         a = norm_deg(r.num("angle"))
-        x, y, w, h = textfit.fit(text, r.num("x"), r.num("y"), a, r.str("origin"), r.num("fontSize", 45),
-                                 r.num("strokeWidth", 6), back)
+        x, y, w, h = self._fit_text(r, text, a, back)
         j = ("", "")  # centre: textfit placed the anchor in the middle of EasyEDA's ink
         eff = [Sym("effects"), [Sym("font"), [Sym("size"), rnd(h * MIL, 4), rnd(w * MIL, 4)],
                                 [Sym("thickness"), rnd(max(0.05, mm(r.num("strokeWidth", 6))), 4)]]]

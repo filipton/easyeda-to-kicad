@@ -336,46 +336,84 @@ def stock_schematic(proj, b, name, lib, fp_names, placed, plain, opts, log, rep,
     return None
 
 
+def _pads(fp_doc) -> list:
+    """Pad numbers and positions of a footprint (KiCad mm, 0.05 mm grid), to tell whether two are the same."""
+    fp = convert_footprint(fp_doc, L.LayerMap(), FpOptions())
+    return sorted((p.number, round(p.at[0] / 0.05), round(p.at[1] / 0.05)) for p in fp.pads)
+
+
+def _library_model(code: str, fp_doc) -> tuple:
+    """(model uuid, transform) of the LCSC part's current library entry, if its footprint is this one."""
+    from .lcsc import LcscError, _doc, fetch_component, fetch_device
+    at = fetch_device(code).get("attributes") or {}
+    if not at.get("3D Model") or not at.get("Footprint"):
+        raise LcscError(f"{code}: no 3D model")
+    if _pads(_doc(fetch_component(at["Footprint"]), "fp")) != _pads(fp_doc):
+        raise LcscError(f"{code}: library footprint differs from the project's")
+    return str(at["3D Model"]), str(at.get("3D Model Transform") or "")
+
+
 def fetch_models(proj: Project, b: Board, fp_names: dict, out: str, lib: str, log, rep: Report,
                  step=_nostep) -> dict:
-    """STEP models from the EasyEDA library for the footprints of this board (needs internet)."""
-    import json
-    from .lcsc import LcscError, fetch_component, fetch_model, model_from_transform, step_extent
-    used = set()
+    """STEP models from the EasyEDA library for the footprints of this board (needs internet).
+
+    Library models get new uuids over time, so the uuid an older project references is often gone.  Then the model
+    with the same title is used (same model, so the project's transform still fits), and failing that the current
+    model of the part's LCSC number, if its footprint has the same pads (EasyEDA centres models on the footprint)."""
+    from .lcsc import LcscError, fetch_step, find_model, model_from_transform, step_extent
+    placed = []  # (footprint uuid, device attributes); a PCB component's own footprint wins over its device's
     if b.pcb:
+        comps: dict[str, dict] = {}
         for a in proj.pcbs[b.pcb].of("ATTR"):
-            if a.str("key") == "Footprint" and a.str("value"):
-                used.add(a.str("value"))
-    wanted = {}  # footprint uuid -> (model uuid, transform)
-    for dev in proj.devices.values():
-        at = dev.get("attributes") or {}
-        fu, mu = str(at.get("Footprint") or ""), str(at.get("3D Model") or "")
-        if fu and mu and fu not in wanted and (not used or fu in used):
-            wanted[fu] = (mu, str(at.get("3D Model Transform") or ""))
-    models, failed = {}, 0
-    shapes = os.path.join(out, f"{lib}.3dshapes")
-    for n, (fu, (mu, tr)) in enumerate(sorted(wanted.items())):
-        step("3d", f"Downloading 3D models {n + 1}/{len(wanted)}", n / len(wanted))
-        name = fp_names.get(fu)
-        if not name:
+            comps.setdefault(str(a.d.get("parentId") or ""), {})[a.str("key")] = a.str("value")
+        for c in proj.pcbs[b.pcb].of("COMPONENT"):
+            at = comps.get(c.id, {})
+            dev = proj.devices.get(at.get("Device") or "", {}).get("attributes") or {}
+            placed.append((at.get("Footprint") or str(dev.get("Footprint") or ""), dev))
+    else:
+        placed = [(str((d.get("attributes") or {}).get("Footprint") or ""), d.get("attributes") or {})
+                  for d in proj.devices.values()]
+    wanted: dict[str, list] = {}  # footprint uuid -> candidates, best first: () -> (model uuid, transform, note)
+    for fu, at in placed:
+        if fu not in proj.footprints:
             continue
-        path = os.path.join(shapes, f"{name}.step")
-        try:
-            if not os.path.exists(path):
-                comp = fetch_component(mu)
-                mid = json.loads(comp.get("dataStr") or "{}").get("model") or comp.get("3d_model_uuid")
-                if not mid:
-                    raise LcscError("no STEP")
-                data = fetch_model(mid)
-                os.makedirs(shapes, exist_ok=True)
-                with open(path, "wb") as f:
-                    f.write(data)
-            with open(path, "rb") as f:
-                ext = step_extent(f.read())
-            models[fu] = model_from_transform(f"${{KIPRJMOD}}/{lib}.3dshapes/{name}.step", tr, ext)
-        except (LcscError, ValueError, OSError):
+        mu, title = str(at.get("3D Model") or ""), str(at.get("3D Model Title") or "")
+        tr = str(at.get("3D Model Transform") or "")
+        code = str(at.get("Supplier Part") or "").strip().upper()
+        cands = wanted.setdefault(fu, [])
+        if mu:
+            cands.append(lambda mu=mu, tr=tr: (mu, tr, ""))
+        if mu and title:
+            cands.append(lambda title=title, tr=tr: (find_model(title), tr, f"model '{title}' found by name"))
+        if re.fullmatch(r"C\d+", code):
+            cands.append(lambda code=code, fp=proj.footprints[fu]: _library_model(code, fp)
+                         + (f"model of {code} from the library",))
+    models, failed, notes = {}, 0, []
+    shapes = os.path.join(out, f"{lib}.3dshapes")
+    todo = sorted((fu, c) for fu, c in wanted.items() if c and fp_names.get(fu))
+    for n, (fu, cands) in enumerate(todo):
+        step("3d", f"Downloading 3D models {n + 1}/{len(todo)}", n / len(todo))
+        name = fp_names[fu]
+        for cand in cands:
+            try:
+                mu, tr, note = cand()
+                data = fetch_step({"3D Model": mu})
+            except (LcscError, ValueError, OSError):
+                continue
+            os.makedirs(shapes, exist_ok=True)
+            with open(os.path.join(shapes, f"{name}.step"), "wb") as f:
+                f.write(data)
+            models[fu] = model_from_transform(f"${{KIPRJMOD}}/{lib}.3dshapes/{name}.step", tr, step_extent(data))
+            if note:
+                notes.append(f"{name}: {note}")
+            break
+        else:
             failed += 1
-    log(f"  3D models: {len(models)} added" + (f", {failed} not available" if failed else ""))
+    log(f"  3D models: {len(models)} added" + (f" ({len(notes)} replaced by the library's current one)" if notes
+                                                else "") + (f", {failed} not available" if failed else ""))
+    if notes:
+        rep.warnings.append("3D models no longer in the EasyEDA library under the project's ids, replaced: "
+                            + "; ".join(notes))
     if failed:
         rep.warnings.append(f"{failed} 3D model(s) could not be downloaded from the EasyEDA library")
     return models

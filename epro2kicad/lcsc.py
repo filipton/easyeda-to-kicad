@@ -129,6 +129,15 @@ def fetch_component(uuid: str) -> dict:
     return json.loads(_cached("components", uuid, get))
 
 
+def find_model(title: str) -> str:
+    """uuid of the LCSC library's 3D model with exactly this title (models get new uuids over time, titles stay)."""
+    res = _get(f"{API}/components/search", {"wd": title, "docType": 16}) or {}
+    for c in (res.get("lists") or {}).get("lcsc") or []:
+        if c.get("docType") == 16 and (c.get("display_title") or "").lower() == title.lower():
+            return c["uuid"]
+    raise LcscError(f"3D model '{title}' not in the library")
+
+
 def fetch_model(model_id: str) -> bytes:
     def get():
         step = _get(MODELS + model_id, raw=True, timeout=60)
