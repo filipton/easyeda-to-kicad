@@ -339,14 +339,17 @@ def bbox(pts: Iterable[Pt]):
 def nest_contours(polys: list[list[Pt]]) -> list[tuple[list[Pt], list[list[Pt]]]]:
     """Group contours into (outline, holes) using even-odd nesting depth."""
     polys = [p for p in polys if len(p) >= 3 and abs(signed_area(p)) > 1e-9]
-    depth = []
-    for i, p in enumerate(polys):
-        probe = _interior_probe(p)
-        d = 0
-        for j, q in enumerate(polys):
-            if i != j and abs(signed_area(q)) > abs(signed_area(p)) and point_in_poly(probe, q):
-                d += 1
-        depth.append(d)
+    area = [abs(signed_area(p)) for p in polys]
+    box = [bbox(p) for p in polys]
+    probes = [_interior_probe(p) for p in polys]
+
+    def inside(i, j):  # probe of i inside contour j (bbox test first: most pairs are far apart)
+        x, y = probes[i]
+        b = box[j]
+        return b[0] <= x <= b[2] and b[1] <= y <= b[3] and point_in_poly(probes[i], polys[j])
+    order = sorted(range(len(polys)), key=lambda i: -area[i])  # only bigger contours can enclose
+    rank = {i: k for k, i in enumerate(order)}
+    depth = [sum(1 for j in order[:rank[i]] if area[j] > area[i] and inside(i, j)) for i in range(len(polys))]
     result: list[tuple[list[Pt], list[list[Pt]]]] = []
     outer_idx = [i for i in range(len(polys)) if depth[i] % 2 == 0]
     for i in outer_idx:
@@ -354,11 +357,10 @@ def nest_contours(polys: list[list[Pt]]) -> list[tuple[list[Pt], list[list[Pt]]]
     for i in range(len(polys)):
         if depth[i] % 2 == 1:
             # attach to the smallest enclosing outer with depth-1
-            probe = _interior_probe(polys[i])
             best = None
             for k, oi in enumerate(outer_idx):
-                if depth[oi] == depth[i] - 1 and point_in_poly(probe, polys[oi]):
-                    if best is None or abs(signed_area(polys[oi])) < abs(signed_area(polys[outer_idx[best]])):
+                if depth[oi] == depth[i] - 1 and inside(i, oi):
+                    if best is None or area[oi] < area[outer_idx[best]]:
                         best = k
             if best is not None:
                 result[best][1].append(polys[i])
@@ -380,12 +382,106 @@ def fracture(outline: list[Pt], holes: list[list[Pt]]) -> list[Pt]:
     """Merge holes into the outline with zero-width bridges (keyhole polygon).
 
     KiCad graphic polygons cannot store holes, KiCad itself writes such shapes
-    in this "fractured" form.
+    in this "fractured" form.  Each hole is bridged horizontally from its right-most vertex to the nearest edge on
+    its right (of the outline or of a hole further right, which can't cross a hole not bridged yet), then the
+    rings are stitched together in one walk.  Edges are bucketed by Y, so a pour with thousands of holes stays fast.
     """
     out = list(outline)
     if signed_area(out) < 0:
         out.reverse()
-    # process holes from right-most to keep bridges from crossing
+    rings = [out]
+    for h in holes:
+        h = list(h)
+        if signed_area(h) > 0:
+            h.reverse()  # holes clockwise
+        if len(h) >= 3:
+            rings.append(h)
+    if len(rings) == 1:
+        return out
+    ys = [p[1] for r in rings for p in r]
+    y0, y1 = min(ys), max(ys)
+    nb = max(1, min(4096, int(len(ys) ** 0.5)))
+    step = (y1 - y0) / nb or 1.0
+    buckets: list[list] = [[] for _ in range(nb)]
+    for ri, r in enumerate(rings):
+        n = len(r)
+        for k in range(n):
+            c, d = r[k], r[(k + 1) % n]
+            if c[1] == d[1]:
+                continue  # horizontal edges are never hit by a horizontal ray
+            lo, hi = sorted((c[1], d[1]))
+            for b in range(int((lo - y0) / step), min(nb - 1, int((hi - y0) / step)) + 1):
+                buckets[b].append((ri, k, c, d))
+    attach: dict = {}  # (ring, edge) -> [(t along the edge, hit point, hole ring, its right-most vertex)]
+    left = []
+    for ri in range(1, len(rings)):
+        h = rings[ri]
+        hi = max(range(len(h)), key=lambda k: (h[k][0], h[k][1]))
+        hx, hy = h[hi]
+        best = None
+        for (rj, k, c, d) in buckets[min(nb - 1, max(0, int((hy - y0) / step)))]:
+            if rj == ri or not (min(c[1], d[1]) <= hy < max(c[1], d[1])):
+                continue
+            x = c[0] + (hy - c[1]) * (d[0] - c[0]) / (d[1] - c[1])
+            if x > hx and (best is None or x < best[0]):
+                best = (x, rj, k, c, d)
+        if best is None:
+            left.append(h)
+            continue
+        x, rj, k, c, d = best
+        span = (d[0] - c[0], d[1] - c[1])
+        t = ((x - c[0]) * span[0] + (hy - c[1]) * span[1]) / (span[0] ** 2 + span[1] ** 2)
+        attach.setdefault((rj, k), []).append((t, (x, hy), ri, hi))
+    for v in attach.values():
+        v.sort(key=lambda a: a[0])
+    # holes hanging (via other holes) off one whose ray missed are not reached by the walk: bridge them the slow way
+    reached, todo = {0}, [0]
+    children: dict = {}
+    for (rj, _), v in attach.items():
+        children.setdefault(rj, []).extend(a[2] for a in v)
+    while todo:
+        for c in children.get(todo.pop(), []):
+            if c not in reached:
+                reached.add(c)
+                todo.append(c)
+    left = [rings[ri] for ri in range(1, len(rings)) if ri not in reached]
+    pts = _keyhole_walk(rings, attach)
+    return fracture_slow(pts, left) if left else pts
+
+
+def _keyhole_walk(rings: list, attach: dict) -> list[Pt]:
+    """Outline ring 0 with every hole spliced in at its bridge: v_k, hit, hole loop (back to its start), hit, v_k+1."""
+    pts: list[Pt] = []
+    # stack items: ("ring", ring index, start vertex, step, close) or ("pt", point)
+    stack = [("ring", 0, 0, 0, False)]
+    while stack:
+        item = stack.pop()
+        if item[0] == "pt":
+            pts.append(item[1])
+            continue
+        _, ri, start, i, close = item
+        r = rings[ri]
+        n = len(r)
+        if i == n:
+            if close:
+                pts.append(r[start])
+            continue
+        k = (start + i) % n
+        pts.append(r[k])
+        stack.append(("ring", ri, start, i + 1, close))
+        for _, ip, hj, hk in reversed(attach.get((ri, k), [])):
+            stack.append(("pt", ip))
+            stack.append(("ring", hj, hk, 0, True))
+            stack.append(("pt", ip))
+    return pts
+
+
+def fracture_slow(outline: list[Pt], holes: list[list[Pt]]) -> list[Pt]:
+    """Bridge each hole to the nearest outline vertex the bridge can reach without crossing (for the rare hole the
+    ray in fracture() misses)."""
+    out = list(outline)
+    if signed_area(out) < 0:
+        out.reverse()
     hs = []
     for h in holes:
         h = list(h)
@@ -397,7 +493,6 @@ def fracture(outline: list[Pt], holes: list[list[Pt]]) -> list[Pt]:
         # right-most vertex of hole
         hi = max(range(len(h)), key=lambda k: (h[k][0], h[k][1]))
         hp = h[hi]
-        # find closest outline vertex visible (approximation: nearest vertex to the right first)
         best, bestd = 0, float("inf")
         for k, p in enumerate(out):
             d = (p[0] - hp[0]) ** 2 + (p[1] - hp[1]) ** 2
