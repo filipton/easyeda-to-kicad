@@ -8,6 +8,7 @@ import shutil
 import tempfile
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 
 from .easyeda.project import Board, Project, load
@@ -67,25 +68,29 @@ def _plan(proj: Project, b: Board, opts: Options) -> list:
     ns = sum(len(pg.doc.recs) for pg in proj.schematics[b.schematic].pages) if b.schematic in proj.schematics else 0
     npcb = len(proj.pcbs[b.pcb].recs) if b.pcb in proj.pcbs else 0
     cli = find_kicad_cli(opts.kicad_cli)
+    # seconds per record measured on the 7 projects of easyeda/easyeda-viewer (2 to 71k PCB records); kicad-cli
+    # needs about a second to start
     steps = [("sch", 0.3 + ns * 5e-5)] if ns else []
     if ns and opts.kicad_symbols and cli:
         steps.append(("stock", 1 + ns * 1.1e-3))
     if opts.download_3d:
         steps.append(("3d", 1 + npcb * 1e-4))
     if npcb:
-        steps.append(("pcb", 0.3 + npcb * 1.2e-4))
+        steps.append(("pcb", 0.3 + npcb * 2.6e-4))
     if npcb and cli and opts.refill_zones:
-        steps.append(("drc", 0.5 + npcb * 3e-4))
+        steps.append(("drc", 1.0 + npcb * 3.8e-4))
     if ns and cli and opts.run_checks:
-        steps.append(("erc", 0.3 + ns * 1.5e-4))
+        steps.append(("erc", 1.0 + ns * 2.2e-4))
     return steps
 
 
 def convert_project(path: str, out_dir: str, opts: Options | None = None, log=print) -> list[Report]:
     opts = opts or Options()
-    if opts.progress:
-        opts.progress(0, 0.02, 1, "Reading the project", None)
+    t0 = time.monotonic()
+    if opts.progress:  # about a quarter second per MB of project
+        opts.progress(0, 0.02, 0.5 + os.path.getsize(path) / 4e6, "Reading the project", None)
     proj = load(path)
+    read_s = time.monotonic() - t0
     log(f"Loaded {os.path.basename(path)}: EasyEDA Pro v{proj.fmt} project '{proj.title}', "
         f"{len(proj.boards)} board(s)")
     reports = []
@@ -95,6 +100,7 @@ def convert_project(path: str, out_dir: str, opts: Options | None = None, log=pr
         boards = [b for b in boards if b.name.lower() in want or proj_name(b.name).lower() in want]
     plan = [(i, k, e) for i, b in enumerate(boards) for k, e in _plan(proj, b, opts)]
     total = sum(e for _, _, e in plan) or 1
+    f0 = max(0.02, min(0.3, read_s / (read_s + total)))  # the bar's share of the reading that's done now
     names_used: set[str] = set()
     for i, b in enumerate(boards):
         name = proj_name(b.name)
@@ -111,7 +117,7 @@ def convert_project(path: str, out_dir: str, opts: Options | None = None, log=pr
             start = sum(e for _, _, e in plan[:at])
             est = plan[at][2]
             prefix = f"{b.name} · " if len(boards) > 1 else ""
-            opts.progress(0.02 + 0.98 * start / total, 0.02 + 0.98 * (start + est) / total, est, prefix + label, sub)
+            opts.progress(f0 + (1 - f0) * start / total, f0 + (1 - f0) * (start + est) / total, est, prefix + label, sub)
         reports.append(convert_board(proj, b, os.path.join(out_dir, name), name, opts, log, step=step))
     return reports
 

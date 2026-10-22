@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import platform
 import subprocess
@@ -177,12 +178,22 @@ def action_import(path: str = "") -> int:
         total = est / (b - a) if b > a else 1.0  # whole job in estimated seconds
         done_est = a * total
         ratio = min(5.0, max(0.3, (pr["t"] - t0[0]) / done_est)) if done_est > 1 else 1.0  # real vs estimated speed
-        frac = pr["sub"] if pr["sub"] is not None else min(0.95, (now - pr["t"]) / max(0.1, est * ratio))
+        in_step = now - pr["t"]
+        span = max(0.1, est * ratio)  # this step's expected length at the speed seen so far
+        if pr["sub"] is not None:
+            frac = pr["sub"]
+            step_left = span * (1 - frac)
+        else:
+            x = in_step / span
+            # past its estimate the step keeps creeping on (never stalls) and is expected to need another third
+            # of the time it has taken so far
+            frac = x * 0.85 if x < 1 else 0.85 + 0.14 * (1 - math.exp(-(x - 1)))
+            step_left = span - in_step if x < 1 else in_step / 3
         pr["f"] = max(pr["f"], min(0.99, a + (b - a) * frac))
         gauge.SetValue(int(pr["f"] * 1000))
         step_lbl.SetLabel(f"{pr['label']}…")
         if el > 2 and pr["f"] > 0.03:
-            left = (1 - pr["f"]) * total * ratio
+            left = step_left + (1 - b) * total * ratio
             pr["eta"] = left if pr["eta"] is None else 0.7 * pr["eta"] + 0.3 * left
             e = pr["eta"]
             txt = "almost done" if e < 3 else f"about {int(round(e / 5) * 5) or 5} s left" if e < 60 else \
