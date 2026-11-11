@@ -24,6 +24,9 @@ AGENT = os.path.expanduser("~/Library/LaunchAgents/com.github.epro2kicad.provide
 APP = os.path.expanduser("~/Applications/EasyEDA to KiCad.app")
 SERVICES = os.path.expanduser("~/Library/Services")
 SERVICE_NAMES = ("Import EasyEDA Pro Project.workflow", "Convert EasyEDA Project to KiCad.workflow")
+# Shortcut of the Services item, i.e. of the import in every KiCad window including the project manager: ⇧⌘I
+# (upper case = with Shift). None of KiCad's own default hotkeys uses it.
+IMPORT_KEY = "I"
 EPRO_UTI = "com.github.epro2kicad.project"
 CLOSER = os.path.expanduser("~/Applications/Close Remote Symbols.app")  # same path as provider.CLOSER
 LSREGISTER = ("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/"
@@ -83,6 +86,27 @@ def register_provider(remove: bool = False) -> bool:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
     return True
+
+
+def enable_api() -> str:
+    """KiCad shows plugin toolbar buttons only while its API server is on (Preferences → Plugins → Enable KiCad
+    API, off by default), so without it the import button simply isn't there. Returns "on" if it already was,
+    "enabled" if switched on here, "" when KiCad has no settings yet (never started)."""
+    path = os.path.join(kicad_config_dir(), "kicad_common.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            if (json.load(f).get("api") or {}).get("enable_server"):
+                return "on"
+    except (OSError, ValueError):
+        return ""
+
+    def on(cfg):
+        api = cfg.get("api")
+        if not isinstance(api, dict):
+            api = cfg["api"] = {}
+        api["enable_server"] = True
+    _rw_json(path, on)
+    return "enabled"
 
 
 PANEL_ACTION = "eeschema.RemoteSymbols.showPanel"
@@ -281,11 +305,13 @@ def _workflow(path: str, name: str, command: str, service: dict, meta: dict) -> 
 
 def install_services(import_script: str) -> None:
     """KiCad's project manager takes no plugin buttons, so: KiCad → Services → Import EasyEDA Pro Project…
-    (the macOS menu bar, assignable to a shortcut) and Finder right-click → Quick Actions on .epro/.epro2 files."""
+    (the macOS menu bar, with ⇧⌘I as its shortcut in every KiCad window; changeable in System Settings → Keyboard →
+    Keyboard Shortcuts → Services) and Finder right-click → Quick Actions on .epro/.epro2 files."""
     q = "'" + import_script.replace("'", "'\\''") + "'"
     _workflow(os.path.join(SERVICES, SERVICE_NAMES[0]), "Import EasyEDA Pro Project…",
               f"{q} > /dev/null 2>&1 &",
-              {"NSRequiredContext": {"NSApplicationIdentifier": "org.kicad.kicad"}},
+              {"NSRequiredContext": {"NSApplicationIdentifier": "org.kicad.kicad"},
+               "NSKeyEquivalent": {"default": IMPORT_KEY}},
               {"serviceApplicationBundleID": "org.kicad.kicad", "serviceApplicationPath": "/Applications/KiCad/KiCad.app",
                "serviceInputTypeIdentifier": "com.apple.Automator.nothing"})
     _workflow(os.path.join(SERVICES, SERVICE_NAMES[1]), "Convert to KiCad",
@@ -345,32 +371,48 @@ def install(autostart: bool) -> int:
         os.chmod(p, os.stat(p).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     print(f"plugin installed: {dest}  (python: {py})")
 
-    if platform.system() == "Darwin":
+    mac = platform.system() == "Darwin"
+    if mac:
         install_app(os.path.join(dest, "import_easyeda.sh"))
         install_closer()
         install_services(os.path.join(dest, "import_easyeda.sh"))
-        print("menu bar: KiCad → Services → Import EasyEDA Pro Project…; Finder: right-click an .epro → Quick Actions")
-        print(f"app: {APP}  (double-click an .epro/.epro2 in Finder, or drop it on the app)")
 
-    if autostart and platform.system() == "Darwin":
+    if autostart and mac:
         install_agent(py, dest)
         print("LCSC provider starts automatically at login (LaunchAgent)")
     else:
         print("LCSC provider starts when you press the 'LCSC parts' button")
 
+    api = "on"
     if kicad_running():
-        print("\nKiCad is running: close it and run this again to register the LCSC provider and add the"
-              f" Remote Symbols button + {PANEL_HOTKEY} (KiCad overwrites its settings when it quits).")
+        print("\nKiCad is running: close it and run this again to register the LCSC provider, switch on the plugin"
+              f" buttons and add the Remote Symbols button + {PANEL_HOTKEY} (KiCad overwrites its settings when it"
+              " quits).")
     else:
         if provider_registered():
             print(f"LCSC provider already registered in KiCad ({BASE})")
         elif register_provider():
             print(f"LCSC provider registered in KiCad ({BASE})")
         setup_schematic_ui()
-        print(f"schematic editor: Remote Symbols button under Place Symbol (right toolbar), hotkey {PANEL_HOTKEY},"
-              " opens as a separate window")
-    print("\nImport buttons: right end of the top toolbar in the schematic and PCB editors; PCB editor also has"
-          " Tools → External Plugins.")
+        api = enable_api()
+        if api == "enabled":
+            print("KiCad API switched on (Preferences → Plugins): plugin toolbar buttons need it")
+
+    print("\nWhere to find it in KiCad")
+    print("  Import an EasyEDA Pro project")
+    print("    schematic / PCB editor   'Import EasyEDA Pro project' button at the right end of the top toolbar")
+    if mac:
+        print(f"    any KiCad window         menu bar: KiCad → Services → Import EasyEDA Pro Project…   (⇧⌘{IMPORT_KEY})")
+        print("                             (the project manager window itself cannot show plugin buttons)")
+        print("    Finder                   double-click an .epro / .epro2, or right-click → Quick Actions → Convert to"
+              " KiCad")
+        print(f"                             or drop it on {APP}")
+    print("  LCSC parts")
+    print(f"    schematic editor         {PANEL_HOTKEY}, the Remote Symbols button under Place Symbol, or the 'LCSC parts'"
+          " toolbar button")
+    if not api:
+        print("\nKiCad has not been started yet: start it once, enable Preferences → Plugins → Enable KiCad API, and the"
+              " toolbar buttons appear.")
     return 0
 
 

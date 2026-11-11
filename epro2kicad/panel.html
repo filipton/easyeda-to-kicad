@@ -1,176 +1,192 @@
 <!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>LCSC parts</title>
 <style>
-:root{--bg:#fff;--bg2:#f4f5f7;--bg3:#eceef1;--fg:#1d1f23;--mut:#6b7079;--line:#e4e6ea;--acc:#1f883d;--acc2:#e9f6ec;--accfg:#fff;--link:#0b62c4;--warn:#b54708;--sel:#e8f0fe;--selbar:#2f6fe4;--pv:#fff;--pvfp:#1b1f24;--shadow:0 8px 28px #0002}
-@media (prefers-color-scheme:dark){:root{--bg:#1c1d20;--bg2:#24262a;--bg3:#2d3035;--fg:#e9eaec;--mut:#9a9ea6;--line:#34373c;--acc:#2ea043;--acc2:#1d3325;--link:#6cb6ff;--warn:#f0a050;--sel:#22314a;--selbar:#5b9bff;--pv:#f4f4f4;--shadow:0 8px 28px #0008}}
+:root{color-scheme:light dark;--bg:#fff;--bg2:#f5f5f6;--bg3:#ebebed;--fg:#1d1d1f;--mut:#6b6b70;--line:#e2e2e5;--acc:#1f883d;--acc2:#e7f5ea;--accfg:#fff;--link:#0b62c4;--warn:#a84a00;--err:#c0392b;--errbg:#fdecea;--sel:#dce8fc;--selbar:#2f6fe4;--pv:#fff;--pvfp:#1b1f24;--shadow:0 8px 28px #0003}
+@media (prefers-color-scheme:dark){:root{--bg:#1e1e1f;--bg2:#28282a;--bg3:#343437;--fg:#e9e9eb;--mut:#9c9ca2;--line:#3a3a3e;--acc:#2ea043;--acc2:#1d3325;--link:#6cb6ff;--warn:#f0a050;--err:#ff8a7a;--errbg:#3a2220;--sel:#25354f;--selbar:#5b9bff;--pv:#f2f2f2;--shadow:0 8px 28px #0009}}
 *{box-sizing:border-box}
 html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.4 -apple-system,system-ui,"Segoe UI",sans-serif;display:flex;flex-direction:column;overflow:hidden;-webkit-font-smoothing:antialiased}
 button,input,select{font:inherit;color:inherit}
 a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}
-.mut{color:var(--mut)}.err{color:var(--warn)}
-header{padding:10px 10px 8px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:7px;position:relative}
+.mut{color:var(--mut)}.err{color:var(--err)}.warn{color:var(--warn)}
+[hidden]{display:none!important}
+:focus-visible{outline:2px solid var(--selbar);outline-offset:1px}
+header{padding:8px 8px 6px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:6px;position:relative}
 .row{display:flex;gap:6px;align-items:center}
 .search{flex:1;position:relative;display:flex}
 .search svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);opacity:.5;pointer-events:none}
-#q{flex:1;min-width:0;padding:8px 10px 8px 32px;border:1px solid var(--line);border-radius:9px;background:var(--bg2);transition:border-color .12s,background .12s}
-#q:focus{outline:0;border-color:var(--acc);background:var(--bg)}
-.btn{border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:5px 10px;cursor:pointer;white-space:nowrap;transition:background .1s,border-color .1s}
-.btn:hover{background:var(--bg2)}
-.btn.on{background:var(--acc2);border-color:var(--acc);color:var(--fg)}
-.primary{background:var(--acc);color:var(--accfg);border:0;border-radius:8px;padding:8px 16px;font-weight:600;cursor:pointer}
+#q{flex:1;min-width:0;padding:7px 10px 7px 31px;border:1px solid var(--line);border-radius:8px;background:var(--bg2);font-size:14px}
+#q:focus{outline:0;border-color:var(--selbar);background:var(--bg);box-shadow:0 0 0 3px color-mix(in srgb,var(--selbar) 22%,transparent)}
+.btn{border:1px solid var(--line);background:var(--bg);border-radius:7px;padding:5px 10px;cursor:pointer;white-space:nowrap}
+.btn:hover{background:var(--bg2)}.btn:disabled{opacity:.45;cursor:default}
+.btn.sm{padding:2px 9px;font-size:12px}
+.btn.on{background:var(--sel);border-color:var(--selbar)}
+.primary{background:var(--acc);color:var(--accfg);border:0;border-radius:7px;padding:7px 16px;font-weight:600;cursor:pointer}
 .primary:hover{filter:brightness(1.07)}.primary:disabled{opacity:.45;cursor:default;filter:none}
+.tools{display:flex;gap:4px 12px;align-items:center;flex-wrap:wrap;font-size:12px}
+.tools .grow{flex:1}
+.tgl{display:inline-flex;align-items:center;gap:5px;cursor:pointer;user-select:none;-webkit-user-select:none;white-space:nowrap}
+.tgl input{margin:0;accent-color:var(--acc)}
+.tools select{font-size:12px;padding:1px 2px;border:1px solid var(--line);border-radius:6px;background:var(--bg);max-width:150px}
 .crumb{display:flex;gap:5px;flex-wrap:wrap;align-items:center}.crumb:empty{display:none}
-.chip{display:inline-flex;align-items:center;gap:4px;background:var(--acc2);border-radius:20px;padding:2px 4px 2px 9px;font-size:12px}
-.chip b{font-weight:500;color:var(--mut)}
-.chip button{border:0;background:none;cursor:pointer;padding:0 4px;color:var(--mut);font-size:14px;line-height:1;border-radius:50%}
-.chip button:hover{color:var(--fg)}
-.opts{display:flex;gap:4px;flex-wrap:wrap}
-.opts label{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--mut);padding:3px 9px;border:1px solid var(--line);border-radius:20px;cursor:pointer;user-select:none}
-.opts label:has(input:checked){color:var(--fg);background:var(--bg2)}
-.opts input{margin:0;accent-color:var(--acc)}
+.chip{display:inline-flex;align-items:center;gap:4px;background:var(--sel);border-radius:20px;padding:1px 3px 1px 9px;font-size:12px;max-width:100%}
+.chip b{font-weight:500;color:var(--mut)}.chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip button{border:0;background:none;cursor:pointer;padding:0 5px;color:var(--mut);font-size:15px;line-height:1.2;border-radius:50%}
+.chip button:hover{color:var(--fg);background:var(--bg3)}
 #bar{position:absolute;left:0;right:0;bottom:-1px;height:2px;overflow:hidden;opacity:0;transition:opacity .15s}
-#bar::after{content:"";position:absolute;top:0;bottom:0;width:30%;background:var(--acc);animation:bar 1s ease-in-out infinite}
+#bar::after{content:"";position:absolute;top:0;bottom:0;width:30%;background:var(--selbar);animation:bar 1s ease-in-out infinite}
 body.loading #bar{opacity:1}
 @keyframes bar{from{left:-30%}to{left:100%}}
 main{flex:1;display:flex;min-height:0}
-.col{min-height:0;overflow:auto}
-#cats{width:210px;border-right:1px solid var(--line);display:none;flex-direction:column;background:var(--bg)}
+#cats{width:204px;flex:none;border-right:1px solid var(--line);display:none;flex-direction:column;background:var(--bg);min-height:0}
 #cats .list{overflow:auto;flex:1;padding:2px 4px 8px}
-#cats input{flex:1;margin:8px 4px 6px 8px;padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg2)}
-#cats input:focus{outline:0;border-color:var(--acc)}
-.cat{padding:4px 8px;border-radius:6px;cursor:pointer;display:flex;justify-content:space-between;gap:6px}
+#cats input{flex:1;min-width:0;margin:6px 4px 5px 6px;padding:4px 8px;border:1px solid var(--line);border-radius:7px;background:var(--bg2);font-size:12px}
+#cats input:focus{outline:0;border-color:var(--selbar)}
+.cat{padding:3px 8px;border-radius:5px;cursor:pointer;display:flex;justify-content:space-between;gap:6px}
 .cat:hover{background:var(--bg2)}.cat.sel{background:var(--sel);font-weight:600}
-.sub .cat{padding-left:22px;color:var(--mut)}.sub .cat.sel,.sub .cat:hover{color:var(--fg)}
-#results{flex:1;display:flex;flex-direction:column;min-width:0}
-#facets{display:flex;gap:8px;overflow-x:auto;padding:8px 8px 6px}#facets:empty{display:none}
+.sub .cat{padding-left:20px;color:var(--mut);font-size:12.5px}.sub .cat.sel,.sub .cat:hover{color:var(--fg)}
+#results{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0}
+#facets{display:flex;gap:6px;overflow-x:auto;padding:6px 8px 4px;flex:none}#facets:empty{display:none}
 body.nofilters #facets{display:none}
-.fcol{flex:0 0 190px;min-width:0;width:190px;border:1px solid var(--line);border-radius:8px;display:flex;flex-direction:column;height:156px;background:var(--bg)}
-.fcol .fh{font-size:11.5px;font-weight:600;padding:5px 8px 3px;display:flex;justify-content:space-between}
-.fcol .fh .n{color:var(--selbar)}
-.fcol input{margin:0 6px 4px;padding:3px 7px;border:1px solid var(--line);border-radius:6px;background:var(--bg2);font-size:12px;min-width:0}
-.fcol input:focus{outline:0;border-color:var(--acc)}
-.fcol .vals{overflow:auto;flex:1;padding:0 3px 4px}
-.fv{padding:2px 6px;border-radius:5px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;user-select:none}
+.fcol{flex:0 0 170px;width:170px;border:1px solid var(--line);border-radius:7px;display:flex;flex-direction:column;height:142px;background:var(--bg)}
+.fcol.has{border-color:var(--selbar)}
+.fcol .fh{font-size:11.5px;font-weight:600;padding:4px 4px 2px 8px;display:flex;justify-content:space-between;gap:4px;align-items:center}
+.fcol .fh span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fcol .fh button{border:0;background:var(--sel);color:var(--selbar);border-radius:9px;font-size:11px;font-weight:600;padding:0 6px;cursor:pointer;white-space:nowrap}
+.fcol input{margin:0 5px 3px;padding:2px 6px;border:1px solid var(--line);border-radius:5px;background:var(--bg2);font-size:12px;min-width:0}
+.fcol input:focus{outline:0;border-color:var(--selbar)}
+.fcol .vals{overflow:auto;flex:1;padding:0 3px 3px}
+.fv{padding:1px 6px;border-radius:4px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px;user-select:none;-webkit-user-select:none}
 .fv:hover{background:var(--bg2)}.fv.on{background:var(--sel);color:var(--selbar);font-weight:600}
-#fbar{display:flex;gap:6px;align-items:center;padding:6px 8px;border-bottom:1px solid var(--line)}
-#fbar .grow{flex:1}#fbar{flex-wrap:wrap}
-.sortseg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
-.sortseg button{border:0;background:var(--bg);padding:3px 10px;font-size:12px;cursor:pointer;color:var(--mut)}
-.sortseg button+button{border-left:1px solid var(--line)}
-.sortseg button:hover{background:var(--bg2)}.sortseg button.on{background:var(--acc2);color:var(--fg);font-weight:600}
-.switch{display:inline-flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;user-select:none;margin-left:4px}
-.switch input{display:none}
-.switch span{width:28px;height:16px;border-radius:8px;background:var(--bg3);border:1px solid var(--line);position:relative;transition:background .15s}
-.switch span::after{content:"";position:absolute;top:1px;left:1px;width:12px;height:12px;border-radius:50%;background:#fff;box-shadow:0 1px 2px #0004;transition:left .15s}
-.switch input:checked+span{background:var(--acc);border-color:var(--acc)}.switch input:checked+span::after{left:13px}#fbar .btn{font-size:12px;padding:3px 10px}
-#fbar .primary{padding:4px 12px;font-size:12px}
-#status{padding:5px 10px;color:var(--mut);font-size:12px;border-bottom:1px solid var(--line)}
-#list{flex:1;overflow:auto;transition:opacity .15s}
-body.dim #list{opacity:.55}
-.part{display:grid;grid-template-columns:84px minmax(0,1fr) 140px 112px;gap:12px;padding:10px 12px;border-bottom:1px solid var(--line);cursor:pointer}
+#status{padding:4px 10px;color:var(--mut);font-size:12px;border-bottom:1px solid var(--line);flex:none}
+#status b{color:var(--fg);font-weight:600}
+#list{flex:1;overflow:auto;transition:opacity .15s;outline:0;overscroll-behavior:contain}
+body.dim #list{opacity:.5}
+.part{display:grid;grid-template-columns:56px minmax(0,1fr) 128px 118px;gap:10px;padding:7px 10px;border-bottom:1px solid var(--line);cursor:pointer;scroll-margin:4px 0}
 .part:hover{background:var(--bg2)}.part.sel{background:var(--sel);box-shadow:inset 3px 0 var(--selbar)}
-.part .img img,.part .noimg{width:84px;height:84px;object-fit:contain;background:#fff;border-radius:6px;display:block}
-.noimg{background:var(--bg3)}
-.part .info{min-width:0;display:flex;flex-direction:column;gap:4px}
-.part .info .mpn{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.part .meta{color:var(--mut);font-size:12px;display:flex;gap:4px 12px;flex-wrap:wrap}
-.part .meta b{font-weight:500;color:var(--fg)}
-.part .cat2{color:var(--mut);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.specs{display:flex;gap:3px;flex-wrap:wrap;max-height:44px;overflow:hidden}
-.sp{font-size:11.5px;padding:0 6px;border-radius:5px;background:var(--bg2);border:1px solid var(--line);white-space:nowrap}
+.part .img{width:56px;height:56px;border-radius:5px;background:var(--bg3);overflow:hidden}
+.part .img img{width:56px;height:56px;object-fit:contain;background:#fff;display:block}
+.part .info{min-width:0;display:flex;flex-direction:column;gap:2px}
+.l1{display:flex;gap:6px;align-items:baseline;min-width:0}
+.mpn{font-weight:600;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.l2{color:var(--mut);font-size:12px;display:flex;gap:0 10px;flex-wrap:wrap;max-height:17px;overflow:hidden}
+.l2 b{font-weight:500;color:var(--fg)}
+.l2 .pkg{color:var(--fg)}
+.specs{display:flex;gap:3px;flex-wrap:wrap;max-height:19px;overflow:hidden}
+.sp{font-size:11.5px;padding:0 6px;border-radius:4px;background:var(--bg2);border:1px solid var(--line);white-space:nowrap;line-height:17px}
+.part.sel .sp,.part:hover .sp{background:var(--bg)}
 .sp:first-child{font-weight:600}
-.part .tiers{font-size:12px;font-variant-numeric:tabular-nums;display:grid;grid-template-columns:auto auto;gap:1px 8px;align-content:start;justify-content:start}
-.part .tiers span:nth-child(odd){color:var(--mut);text-align:right}.part .tiers span:nth-child(even){color:var(--warn)}
-.part .side{display:flex;flex-direction:column;align-items:flex-end;gap:6px;font-size:12px}
-.part .side .stk{color:var(--mut)}.part .side .stk b{color:var(--fg);font-weight:600;font-variant-numeric:tabular-nums}
-.rowplace{border:0;background:var(--acc);color:var(--accfg);border-radius:7px;padding:5px 18px;font-weight:600;cursor:pointer;margin-top:auto}
+.sum{font-size:12px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tiers{font-size:12px;font-variant-numeric:tabular-nums;display:grid;grid-template-columns:auto auto;gap:0 8px;align-content:start;justify-content:end}
+.tiers span:nth-child(odd){color:var(--mut);text-align:right}
+.tiers span:nth-child(2){font-weight:600}
+.side{display:flex;flex-direction:column;align-items:flex-end;gap:3px;font-size:12px;min-width:0}
+.stk{font-variant-numeric:tabular-nums;white-space:nowrap}.stk.none{color:var(--warn)}
+.p1{display:none;font-variant-numeric:tabular-nums;font-weight:600}
+.rowplace{border:0;background:var(--acc);color:var(--accfg);border-radius:6px;padding:3px 16px;font-weight:600;cursor:pointer;margin-top:auto;font-size:12.5px}
 .rowplace:hover{filter:brightness(1.07)}.rowplace:disabled{opacity:.4;cursor:default;filter:none}
-.lnk{font-size:12px}
-.p1{display:none}
-#results{container-type:inline-size}
-@container (max-width:640px){.part{grid-template-columns:64px minmax(0,1fr) 96px}.part .tiers{display:none}.p1{display:block}.part .img img,.part .noimg{width:64px;height:64px}}
-@container (max-width:430px){.part{grid-template-columns:minmax(0,1fr) 88px}.part .img{display:none}}
-.mpn{font-weight:600}
-.tag{font-size:10.5px;padding:1px 6px;border-radius:9px;background:var(--bg3);color:var(--mut);white-space:nowrap;font-weight:500;vertical-align:1px}
+.nosym{margin-top:auto;color:var(--mut);font-size:11.5px}
+.tag{font-size:10.5px;padding:0 6px;border-radius:9px;background:var(--bg3);color:var(--mut);white-space:nowrap;font-weight:500;flex:none}
 .tag.basic{background:var(--acc2);color:var(--acc)}
-.stock0{color:var(--warn)}
-.skel{height:105px;margin:0;border-top:1px solid var(--line);background:linear-gradient(90deg,transparent,var(--bg2),transparent) 0 0/200% 100%;animation:sk 1.2s linear infinite}
+#results.narrow .part{grid-template-columns:48px minmax(0,1fr) 96px}
+#results.narrow .tiers{display:none}#results.narrow .p1{display:block}
+#results.narrow .part .img,#results.narrow .part .img img{width:48px;height:48px}
+#results.tiny .part{grid-template-columns:minmax(0,1fr) 88px}#results.tiny .part .img{display:none}
+#results.narrow .fcol{height:112px;flex-basis:150px;width:150px}
+.skel{height:71px;border-bottom:1px solid var(--line);background:linear-gradient(90deg,transparent,var(--bg2),transparent) 0 0/200% 100%;animation:sk 1.2s linear infinite}
 @keyframes sk{to{background-position:-200% 0}}
-#sentinel{height:40px;display:flex;align-items:center;justify-content:center}
-#detail{display:none;position:fixed;inset:0;z-index:15;background:#0006;align-items:center;justify-content:center;padding:14px}
+.empty{padding:34px 18px;text-align:center;color:var(--mut);display:flex;flex-direction:column;gap:8px;align-items:center}
+.empty h3{margin:0;font-size:14px;font-weight:600;color:var(--fg)}
+.empty p{margin:0;max-width:440px}
+.empty.bad h3{color:var(--err)}
+kbd{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;padding:0 4px;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;background:var(--bg2);color:var(--fg)}
+#tail{min-height:1px;padding:0 12px;display:flex;gap:8px;align-items:center;justify-content:center;color:var(--mut);font-size:12px;text-align:center}
+#tail:not(:empty){padding:10px 12px 14px}
+#detail{display:none;position:fixed;inset:0;z-index:15;background:#0006;align-items:center;justify-content:center;padding:12px}
 body.showdetail #detail{display:flex}
-.dlg{background:var(--bg);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);width:min(820px,100%);max-height:100%;display:flex;flex-direction:column;overflow:hidden}
-.dhead{padding:10px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center}
-.dhead .place{border:0;padding:0;background:none}
+.dlg{background:var(--bg);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);width:min(820px,100%);max-height:100%;display:flex;flex-direction:column;overflow:hidden}
+.dhead{padding:8px 8px 8px 12px;border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:center}
 .dhead .mpn{font-size:15px}
+#dsub{font-size:12px;display:flex;gap:0 10px;flex-wrap:wrap}
 .dbody{flex:1;overflow:auto;padding:10px}
 .pv{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
-.dcols{display:grid;grid-template-columns:1fr 220px;gap:14px}
-@media (max-width:640px){.dcols{grid-template-columns:1fr}.pv{grid-template-columns:1fr}}
-.pvbox{border:1px solid var(--line);border-radius:10px;height:240px;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative;cursor:zoom-in}
-.pvbox.sym{background:var(--pv)}.pvbox.fp{background:var(--pvfp)}
-.pvbox img{max-width:100%;max-height:100%}
+.dcols{display:grid;grid-template-columns:1fr 210px;gap:14px}
+.pvbox{border:1px solid var(--line);border-radius:8px;height:230px;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
+.pvbox.has{cursor:zoom-in}
+.pvbox.sym{background:var(--pv);color:#666}.pvbox.fp{background:var(--pvfp);color:#9aa}
 .pvbox svg{display:block;animation:fade .2s}
 @keyframes fade{from{opacity:0}}
 .pvbox .lbl{position:absolute;left:7px;top:6px;font-size:11px;color:#888;display:flex;gap:5px;align-items:center;z-index:1}
 .pvbox.big{position:fixed;inset:12px;height:auto;z-index:20;cursor:zoom-out;box-shadow:var(--shadow)}
-.photo{width:100%;max-height:150px;object-fit:contain;background:#fff;border-radius:10px;margin-bottom:10px}
+.photo{width:100%;max-height:150px;object-fit:contain;background:#fff;border-radius:8px;margin-bottom:8px}
 table{border-collapse:collapse;width:100%;margin-bottom:8px}
-td{padding:4px 4px;border-bottom:1px solid var(--line);vertical-align:top}
+td{padding:3px 4px;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere}
 td:first-child{color:var(--mut);width:42%}
-h4{margin:12px 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut)}
-.place{background:var(--bg);border-top:1px solid var(--line);padding:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-.split{position:relative;display:inline-flex}
-.split #placebtn{border-radius:8px 0 0 8px;min-width:90px}
-.split #placemenu{border-radius:0 8px 8px 0;border-left:1px solid #fff5;padding:8px 9px}
-.menu{position:absolute;top:calc(100% + 6px);right:0;z-index:10;background:var(--bg);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:4px;min-width:270px}
-.menu button{display:block;width:100%;text-align:left;background:none;border:0;border-radius:7px;padding:7px 10px;cursor:pointer}
+h4{margin:10px 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut)}
+h4:first-child{margin-top:0}
+.split{position:relative;display:inline-flex;flex:none}
+.split #placebtn{border-radius:7px 0 0 7px;min-width:84px}
+.split #placemenu{border-radius:0 7px 7px 0;border-left:1px solid #fff5;padding:7px 8px}
+.menu{position:absolute;top:calc(100% + 6px);right:0;z-index:10;background:var(--bg);border:1px solid var(--line);border-radius:9px;box-shadow:var(--shadow);padding:4px;min-width:270px}
+.menu button{display:block;width:100%;text-align:left;background:none;border:0;border-radius:6px;padding:6px 10px;cursor:pointer}
 .menu button:hover{background:var(--bg2)}.menu button small{color:var(--mut);display:block}
 .seg{display:inline-flex;border:1px solid #ccc;border-radius:6px;overflow:hidden;background:#fff}
 .seg button{border:0;background:#fff;color:#666;font-size:10.5px;padding:1px 7px;cursor:pointer}.seg button.on{background:#1f883d;color:#fff}
 .lbl select{font-size:11px;color:#333;background:#fff;border:1px solid #ccc;border-radius:5px}
-.spin{display:inline-block;width:13px;height:13px;border:2px solid var(--mut);border-top-color:transparent;border-radius:50%;animation:s .8s linear infinite;vertical-align:-2px}
+.spin{display:inline-block;width:13px;height:13px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:s .8s linear infinite;vertical-align:-2px;opacity:.7;flex:none}
 @keyframes s{to{transform:rotate(360deg)}}
-/* wide panel: categories beside the list; narrow: categories as overlay */
-@media (min-width:900px){#cats{display:flex}#catbtn{display:none}#catclose{display:none}}
-@media (max-width:899px){body.showcats #cats{display:flex;position:fixed;inset:0;width:auto;z-index:10;background:var(--bg)}}
+#toast{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:30;max-width:min(560px,calc(100% - 24px));background:var(--bg);border:1px solid var(--line);border-left:4px solid var(--selbar);border-radius:9px;box-shadow:var(--shadow);padding:9px 10px 9px 12px;display:flex;gap:9px;align-items:flex-start}
+#toast.ok{border-left-color:var(--acc)}#toast.bad{border-left-color:var(--err);background:var(--errbg)}
+#toast .msg{flex:1;min-width:0;overflow-wrap:anywhere}#toast small{display:block;color:var(--mut);margin-top:3px}
+#toast button{border:0;background:none;cursor:pointer;color:var(--mut);font-size:15px;line-height:1;padding:1px 4px}
+/* wide panel: categories beside the list, and the part's details docked at the right instead of covering it */
+@media (min-width:860px){#cats{display:flex}#catbtn{display:none}#catclose{display:none}}
+@media (max-width:859px){body.showcats #cats{display:flex;position:fixed;inset:0;width:auto;z-index:12}}
+@media (min-width:1040px){
+ #detail{position:static;inset:auto;background:none;padding:0;width:42%;max-width:520px;min-width:390px;flex:none;border-left:1px solid var(--line);align-items:stretch}
+ .dlg{border:0;border-radius:0;box-shadow:none;width:100%}
+ .pvbox{height:190px}
+ .dcols{grid-template-columns:1fr}
+ .photo{max-height:110px}
+}
+@media (max-width:640px){.dcols{grid-template-columns:1fr}.pv{grid-template-columns:1fr}.pvbox{height:190px}}
 </style></head><body>
 <header>
  <div class="row">
-  <button class="btn" id="catbtn" title="Categories">☰</button>
-  <div class="search"><svg width="14" height="14" viewBox="0 0 16 16"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M11 11l4 4" stroke="currentColor" stroke-width="2"/></svg><input id="q" type="search" placeholder="Search LCSC: C2040, CL10A106, 10uF 0603, ESP32…" autocomplete="off"></div>
+  <button class="btn" id="catbtn" title="Categories" aria-label="Categories">☰</button>
+  <div class="search"><svg width="14" height="14" viewBox="0 0 16 16"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M11 11l4 4" stroke="currentColor" stroke-width="2"/></svg><input id="q" type="search" placeholder="Search LCSC: C2040, CL10A106, 10uF 0603, ESP32…" aria-label="Search LCSC parts" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" autofocus></div>
+ </div>
+ <div class="tools">
+  <label class="tgl" title="Hide parts LCSC has none of right now"><input type="checkbox" id="stock" checked>In stock</label>
+  <label class="tgl" title="Only JLCPCB basic parts (no extended-part fee in assembly)"><input type="checkbox" id="basic">Basic</label>
+  <label class="tgl" title="Only parts with an EasyEDA symbol and footprint, i.e. the ones that can be placed"><input type="checkbox" id="placeable" checked>Placeable</label>
+  <select id="sort" title="Sort order" aria-label="Sort order"><option value="">Best match</option><option value="stock">Most in stock</option><option value="price">Lowest price</option><option value="price-desc">Highest price</option></select>
+  <button class="btn sm" id="ftoggle" hidden></button>
+  <span class="grow"></span>
+  <label class="tgl" title="Download the 3D model (STEP) along with every part you place"><input type="checkbox" id="m3d" checked>Place with 3D model</label>
  </div>
  <div class="crumb" id="crumb"></div>
- <div class="opts">
-  <label><input type="checkbox" id="basic"> JLCPCB basic</label>
-  <label><input type="checkbox" id="placeable" checked> has symbol+footprint</label>
-  <label><input type="checkbox" id="m3d" checked> 3D model</label>
- </div>
  <div id="bar"></div>
 </header>
 <main>
- <section id="cats" class="col">
-  <div class="row"><input id="catq" type="search" placeholder="Filter categories" style="flex:1"><button class="btn" id="catclose" title="Close">✕</button></div>
+ <section id="cats">
+  <div class="row"><input id="catq" type="search" placeholder="Filter categories" aria-label="Filter categories" autocomplete="off" spellcheck="false"><button class="btn sm" id="catclose" title="Close" style="margin-right:6px">✕</button></div>
   <div class="list" id="catlist"><div class="cat mut">Loading…</div></div>
  </section>
  <section id="results">
-  <div id="fbar" hidden><button class="btn" id="ftoggle"></button>
-   <span class="sortseg" id="sort"><button data-s="">Best match</button><button data-s="stock">Stock</button><button data-s="price">Price ↑</button><button data-s="price-desc">Price ↓</button></span>
-   <label class="switch"><input type="checkbox" id="stock" checked><span></span>In stock</label>
-   <span class="grow"></span><button class="btn" id="fclear">Clear filters</button></div>
   <div id="facets"></div>
-  <div id="status">Search or pick a category.</div>
-  <div id="list"></div>
+  <div id="status" hidden></div>
+  <div id="list" tabindex="-1"></div>
  </section>
  <section id="detail">
-  <div class="dlg"><div class="dhead"><div style="flex:1;min-width:0"><div class="mpn" id="dtitle">Select a part</div><div class="mut" id="dsub"></div></div>
-   <div class="place"><span class="split"><button class="primary" id="placebtn" disabled>Place</button><button class="primary" id="placemenu" disabled aria-label="More placement options" title="Place with KiCad's or EasyEDA's symbol">&#9662;</button><div class="menu" id="pmenu" hidden></div></span></div><button class="btn" id="back" title="Close (Esc)">✕</button></div>
-  <div id="pstat" class="mut" style="padding:0 10px"></div>
-  <div class="dbody" id="dbody"><p class="mut">Click a part to see its symbol, footprint, specs and prices. Double-click places it.</p></div></div>
+  <div class="dlg"><div class="dhead"><div style="flex:1;min-width:0"><div class="mpn" id="dtitle"></div><div class="mut" id="dsub"></div></div>
+   <span class="split"><button class="primary" id="placebtn" disabled title="Place this part in the schematic (Enter)">Place</button><button class="primary" id="placemenu" disabled aria-label="More placement options" title="Place with KiCad's or EasyEDA's symbol">&#9662;</button><div class="menu" id="pmenu" hidden></div></span>
+   <button class="btn" id="back" title="Close (Esc)" aria-label="Close">✕</button></div>
+  <div class="dbody" id="dbody"></div></div>
  </section>
 </main>
+<div id="toast" hidden role="status" aria-live="polite"></div>
 <script>
 "use strict";
 // ---------------- KiCad remote symbol RPC (version 1) ----------------
@@ -222,32 +238,60 @@ function send(command, parameters, data) {
 }
 // ---------------- helpers ----------------
 const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const fmt = n => Number(n || 0).toLocaleString();
+const fmt = n => Number(n || 0).toLocaleString('en-US');
 const price = v => '$' + (+v < 1 ? (+v).toFixed(4) : (+v).toFixed(2));
+const ago = s => s < 5400 ? Math.max(1, Math.round(s / 60)) + ' min' : s < 129600 ? Math.round(s / 3600) + ' h' : Math.round(s / 86400) + ' days';
 const store = { get(k, d) { try { const v = localStorage.getItem('lcsc.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
                 set(k, v) { try { localStorage.setItem('lcsc.' + k, JSON.stringify(v)); } catch (e) {} } };
-async function getJSON(url, opts) {
-  const r = await fetch(url, opts); let j; try { j = await r.json(); } catch (e) { throw new Error('HTTP ' + r.status); }
-  if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status)); return j;
+// Answers of the provider. signal: the caller gave up on it (a newer search); timeout: nobody answers.
+// Errors say what happened in the user's words (kind: offline | timeout | lcsc | down | http).
+async function getJSON(url, o = {}) {
+  const c = new AbortController(), t = setTimeout(() => c.abort(), o.timeout || 45000);
+  const give = () => c.abort();
+  if (o.signal) { if (o.signal.aborted) c.abort(); else o.signal.addEventListener('abort', give); }
+  let r;
+  try { r = await fetch(url, {method: o.method || 'GET', signal: c.signal}); }
+  catch (e) {
+    if (o.signal && o.signal.aborted) throw Object.assign(new Error('superseded'), {name: 'AbortError'});
+    if (c.signal.aborted) throw Object.assign(new Error('No answer after ' + Math.round((o.timeout || 45000) / 1000) + ' s.'), {kind: 'timeout'});
+    throw Object.assign(new Error("The LCSC helper on this computer isn't running. Press the “LCSC parts” toolbar button in the schematic editor to start it."), {kind: 'down'});
+  } finally { clearTimeout(t); if (o.signal) o.signal.removeEventListener('abort', give); }
+  let j = null; try { j = await r.json(); } catch (e) {}
+  if (!r.ok || !j || j.error) throw Object.assign(new Error((j && j.error) || 'HTTP ' + r.status), {kind: (j && j.kind) || 'http', detail: (j && j.detail) || ''});
+  return j;
 }
-function status(html, err) { const s = $('#status'); s.innerHTML = html; s.className = err ? 'err' : ''; }
+const quiet = (url, o) => fetch(url, o).catch(() => {});  // prefetches and notifications: nobody waits for them
 // ---------------- state ----------------
-const st = { sort: store.get('sort', ''), q: '', catalog: '', catName: '', filters: {}, page: 1, total: 0, parts: [], facets: [], seq: 0, sel: null, open: null };
+const st = { q: '', catalog: '', catName: '', filters: {}, sort: store.get('sort', ''),
+  parts: [], facets: [], total: 0, found: 0, page: 0, stale: 0,   // what is loaded (page: the last page that is)
+  seq: 0, busy: false, more: false, error: null, moreError: null, idleRun: 0,
+  sel: '', open: null, detail: null, expanded: null };
 ['stock', 'basic', 'placeable', 'm3d'].forEach(k => { $('#' + k).checked = store.get(k, $('#' + k).checked); });
+$('#sort').value = st.sort; if ($('#sort').value !== st.sort) { st.sort = ''; $('#sort').value = ''; }
+const hasQuery = () => !!(st.q || st.catalog || (st.filters.Category || []).length);
+const byCode = code => st.parts.find(p => p.code === code);
 // ---------------- categories ----------------
-let tree = [];
+let tree = store.get('cats', []);
 async function loadCats() {
-  try { tree = await getJSON('/api/categories'); renderCats(); }
-  catch (e) { $('#catlist').innerHTML = `<div class="cat err">${esc(e.message)}</div>`; }
+  if (tree.length) renderCats();   // last time's tree at once; the provider's answer replaces it
+  try {
+    const t = await getJSON('/api/categories');
+    tree = t; store.set('cats', t); renderCats();
+    if (st.catalog && !st.catName) { st.catName = catName(st.catalog); renderCrumb(); }
+  } catch (e) {
+    if (!tree.length) $('#catlist').innerHTML = `<div class="cat err" style="cursor:default;display:block">${esc(e.message)}</div><div style="padding:4px 8px"><button class="btn sm" id="catretry">Try again</button></div>`;
+  }
 }
+function catName(id) { for (const c of tree) for (const x of [c, ...c.children]) if (String(x.id) === String(id)) return x.name; return ''; }
 function renderCats() {
-  const f = $('#catq').value.trim().toLowerCase(), open = st.open;
+  const f = $('#catq').value.trim().toLowerCase();
   let h = `<div class="cat ${!st.catalog ? 'sel' : ''}" data-id="" data-name="">All parts</div>`;
   for (const c of tree) {
-    const kids = c.children.filter(s => !f || s.name.toLowerCase().includes(f) || c.name.toLowerCase().includes(f));
-    if (f && !kids.length && !c.name.toLowerCase().includes(f)) continue;
-    const expanded = f || open === c.id || c.children.some(s => String(s.id) === st.catalog);
+    const hit = c.name.toLowerCase().includes(f), kids = c.children.filter(s => !f || hit || s.name.toLowerCase().includes(f));
+    if (f && !kids.length && !hit) continue;
+    const expanded = f || st.expanded === c.id || c.children.some(s => String(s.id) === st.catalog);
     h += `<div class="cat ${String(c.id) === st.catalog ? 'sel' : ''}" data-id="${c.id}" data-name="${esc(c.name)}" data-parent="1"><span>${esc(c.name)}</span><span class="mut">${expanded ? '▾' : '▸'}</span></div>`;
     if (expanded) h += '<div class="sub">' + kids.map(s =>
       `<div class="cat ${String(s.id) === st.catalog ? 'sel' : ''}" data-id="${s.id}" data-name="${esc(s.name)}">${esc(s.name)}</div>`).join('') + '</div>';
@@ -255,100 +299,136 @@ function renderCats() {
   $('#catlist').innerHTML = h;
 }
 $('#catlist').addEventListener('click', e => {
+  if (e.target.id === 'catretry') { $('#catlist').innerHTML = '<div class="cat mut">Loading…</div>'; loadCats(); return; }
   const el = e.target.closest('.cat'); if (!el || el.dataset.id === undefined) return;
-  if (el.dataset.parent && st.open !== Number(el.dataset.id) && !$('#catq').value) { st.open = Number(el.dataset.id); }
+  if (el.dataset.parent && !$('#catq').value) st.expanded = Number(el.dataset.id);
   setCategory(el.dataset.id, el.dataset.name);
 });
 $('#catq').addEventListener('input', renderCats);
-// hovering a category starts its search, so the click usually shows it at once
+// resting on a category starts its search, so the click usually shows it at once
 let catT = null;
 $('#catlist').addEventListener('mouseover', e => {
-  const el = e.target.closest('.cat'); clearTimeout(catT); if (!el || !el.dataset.id) return;
-  catT = setTimeout(() => fetch(searchURL(el.dataset.id, {}, 1) + '&pre=1').catch(() => {}), 150);
+  const el = e.target.closest('.cat'); clearTimeout(catT); if (!el || !el.dataset.id || el.dataset.id === st.catalog) return;
+  catT = setTimeout(() => quiet(searchURL(el.dataset.id, {}, 1) + '&pre=1'), 200);
 });
-$('#catbtn').onclick = () => document.body.classList.add('showcats');
+$('#catbtn').onclick = () => { document.body.classList.add('showcats'); $('#catq').focus(); };
 $('#catclose').onclick = () => document.body.classList.remove('showcats');
 function setCategory(id, name) {
-  st.catalog = id || ''; st.catName = name || ''; st.filters = {};
-  document.body.classList.remove('showcats'); renderCats(); search(1);
+  st.catalog = id || ''; st.catName = name || ''; st.filters = {}; resetDraft();
+  document.body.classList.remove('showcats'); renderCats(); search();
 }
 // ---------------- search ----------------
-let timer = null;
-$('#q').addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => { st.q = $('#q').value.trim(); search(1); }, 250); });
-$('#q').addEventListener('keydown', e => { if (e.key === 'Enter') { clearTimeout(timer); st.q = $('#q').value.trim(); search(1); } });
-['stock', 'basic', 'placeable'].forEach(k => $('#' + k).onchange = () => { store.set(k, $('#' + k).checked); renderList(); });
-$('#m3d').onchange = () => store.set('m3d', $('#m3d').checked);
-async function search(page, quick) {
-  const my = ++st.seq; st.page = page;
-  if (page === 1) store.set('last', {q: st.q, cat: st.catalog, catName: st.catName, f: st.filters});  // reopened panel starts here
+let qTimer = null, ctl = null;
+const typed = () => $('#q').value.trim().replace(/\s+/g, ' ');
+function setBusy(on, dim) { st.busy = on; document.body.classList.toggle('loading', on); document.body.classList.toggle('dim', !!(on && dim)); }
+$('#q').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(submitQuery, 220); });
+function submitQuery() {   // the box as it is now; nothing to do when that is what's shown already
+  clearTimeout(qTimer); qTimer = null;
+  const q = typed(); if (q === st.q && !st.error) return false;
+  st.q = q; search(); return true;
+}
+function searchURL(catalog, filters, page) {
+  return '/api/search?' + new URLSearchParams({ q: st.q, catalog, page, f: JSON.stringify(filters), sort: st.sort });
+}
+// First page of a new search. The results on screen stay (dimmed) until the answer is there; an answer that is no
+// longer wanted - a newer search started meanwhile - is dropped, and its request is cancelled.
+async function search(o = {}) {
+  const my = ++st.seq;
+  clearTimeout(qTimer); qTimer = null;
+  st.q = typed();   // whatever started this search (a category, a filter), it is for the text in the box right now
+  if (ctl) ctl.abort();
+  ctl = null; st.more = false; st.error = st.moreError = null; st.idleRun = 0;
+  store.set('last', {q: st.q, cat: st.catalog, catName: st.catName, f: st.filters});  // a reopened panel starts here
   renderCrumb();
-  if (!st.q && !st.catalog && !(st.filters.Category || []).length) { st.parts = []; st.facets = []; renderFacets(); renderList(); status('Search or pick a category.'); return; }
-  // keep the current results on screen (dimmed, progress bar) instead of blanking the list
-  document.body.classList.add('loading'); document.body.classList.toggle('dim', page === 1 && !quick);
-  if (page === 1 && !st.parts.length) $('#list').innerHTML = '<div class="skel"></div>'.repeat(8);
-  if (page === 1 && st.parts.length) status(`${fmt(st.total)} parts · updating…`);
+  if (!hasQuery()) {
+    Object.assign(st, {parts: [], facets: [], total: 0, found: 0, page: 0, stale: 0, sel: ''});
+    setBusy(false); renderFacets(); renderList(); return;
+  }
+  setBusy(true, !o.quick);
+  if ($('#list .part')) renderStatus(); else renderList();   // nothing on screen to keep: placeholders
+  const c = ctl = new AbortController(), u = searchURL(st.catalog, st.filters, 1);
   try {
-    const u = searchURL(st.catalog, st.filters, page);
-    const r = await getJSON(u);
+    const r = await getJSON(u, {signal: c.signal});
     if (my !== st.seq) return;
     if (r.catalog && r.catalog !== st.catalog) {  // a Category facet switched us into that category
-      st.catalog = r.catalog; st.catName = (st.filters.Category || []).join(', '); delete st.filters.Category; renderCats();
+      st.catalog = r.catalog; st.catName = (st.filters.Category || []).join(', ') || catName(r.catalog); delete st.filters.Category;
+      store.set('last', {q: st.q, cat: st.catalog, catName: st.catName, f: st.filters}); renderCats();
     }
-    st.total = r.total; st.facets = r.facets;
-    const seen = new Set(page === 1 ? [] : st.parts.map(p => p.code));
-    const fresh = r.parts.filter(p => !seen.has(p.code) && seen.add(p.code));
-    st.parts = page === 1 ? fresh : st.parts.concat(fresh);
-    if (page > 1 && !fresh.length) st.total = st.parts.length;  // nothing new: stop loading more
-    renderCrumb(); if (page === 1) renderFacets(); renderList();  // later pages keep half-picked filters
-    if (page === 1 && !quick) $('#list').scrollTop = 0;
-    if (r.age > 600) refresh(u, my);
-    if (st.parts.length < st.total) fetch(searchURL(st.catalog, st.filters, page + 1) + '&pre=1').catch(() => {});  // warm the next page
-  } catch (e) { if (my === st.seq) { status(esc(e.message), true); if (!st.parts.length) $('#list').innerHTML = ''; } }
-  if (my === st.seq) {
-    document.body.classList.remove('loading', 'dim');
-    const m = $('#sentinel'); if (m) { more.unobserve(m); more.observe(m); }  // still in view (e.g. all hidden by "In stock"): load on
+    const seen = new Set();
+    Object.assign(st, {parts: (r.parts || []).filter(p => !seen.has(p.code) && seen.add(p.code)), facets: r.facets || [],
+      total: r.total || 0, found: r.found || 0, page: 1, stale: r.stale ? Math.max(1, r.age || 1) : 0});
+    if (st.sel && !seen.has(st.sel)) st.sel = '';
+    setBusy(false); renderCrumb(); renderFacets(); renderList();
+    if (!o.quick) $('#list').scrollTop = 0;
+    if (!r.stale && r.age > 600) refresh(u, my);
+  } catch (e) {
+    if (my !== st.seq || e.name === 'AbortError') return;
+    // parts of another search must not stand under this one: show what went wrong instead
+    Object.assign(st, {parts: [], total: 0, found: 0, page: 0, stale: 0, sel: '', error: e});
+    setBusy(false); renderList();
+  }
+}
+// The next page, when the end of the list comes into view (or on request). One at a time, and only for the search
+// that is on screen: `my` is its number, and anything that comes back for an older one is dropped.
+async function loadMore() {
+  if (st.busy || st.more || !st.page || st.parts.length >= st.total) return;
+  const my = st.seq, page = st.page + 1, u = searchURL(st.catalog, st.filters, page);
+  st.more = true; st.moreError = null; renderTail();
+  try {
+    const r = await getJSON(u);
+    if (my !== st.seq) return;
+    const seen = new Set(st.parts.map(p => p.code)), add = (r.parts || []).filter(p => !seen.has(p.code) && seen.add(p.code));
+    st.page = page; st.parts = st.parts.concat(add);
+    st.total = add.length ? Math.max(r.total || 0, st.parts.length) : st.parts.length;  // nothing new: that was the end
+    st.idleRun = add.some(shown) ? 0 : st.idleRun + 1;
+    st.more = false;
+    if (st.sort || !$('#list .part')) { const top = $('#list').scrollTop; renderList(); $('#list').scrollTop = top; }
+    else { $('#tail').insertAdjacentHTML('beforebegin', add.filter(shown).map(rowHTML).join('')); renderTail(); renderStatus(); }
+    if (!r.stale && r.age > 600) refresh(u, my);
+  } catch (e) {
+    if (my !== st.seq) return;
+    st.more = false; st.moreError = e; renderTail();   // no automatic retry: the Retry button asks again
   }
 }
 // an answer from the cache is shown at once; this brings its stock and prices up to date without moving the list
 async function refresh(u, my) {
   try {
     const r = await getJSON(u + '&fresh=1');
-    if (my !== st.seq) return;
-    const now = new Map(r.parts.map(p => [p.code, p]));
-    st.parts = st.parts.map(p => now.has(p.code) ? Object.assign(p, {stock: now.get(p.code).stock, prices: now.get(p.code).prices, cls: now.get(p.code).cls}) : p);
-    const top = $('#list').scrollTop; renderList(); $('#list').scrollTop = top;
+    if (my !== st.seq || r.stale) return;
+    const now = new Map((r.parts || []).map(p => [p.code, p]));
+    let changed = false;
+    for (const p of st.parts) { const n = now.get(p.code); if (!n) continue;
+      if (n.stock !== p.stock || n.cls !== p.cls || JSON.stringify(n.prices) !== JSON.stringify(p.prices)) changed = true;
+      p.stock = n.stock; p.prices = n.prices; p.cls = n.cls; }
+    if (changed) { const top = $('#list').scrollTop; renderList(); $('#list').scrollTop = top; }
   } catch (e) {}
-}
-function searchURL(catalog, filters, page) {
-  return '/api/search?' + new URLSearchParams({ q: st.q, catalog, page, f: JSON.stringify(filters), sort: st.sort });
 }
 function renderCrumb() {
   const chips = [];
-  if (st.catalog) chips.push(`<span class="chip"><b>Category</b> ${esc(st.catName || st.catalog)}<button data-k="__cat">×</button></span>`);
+  if (st.catalog) chips.push(`<span class="chip"><b>Category</b><span>${esc(st.catName || catName(st.catalog) || st.catalog)}</span><button data-k="__cat" title="Leave this category" aria-label="Remove">×</button></span>`);
   for (const [k, vs] of Object.entries(st.filters)) for (const v of vs)
-    chips.push(`<span class="chip"><b>${esc(k)}</b> ${esc(v)}<button data-k="${esc(k)}" data-v="${esc(v)}">×</button></span>`);
-  if (chips.length > 1) chips.push('<button class="btn" data-k="__all" style="padding:1px 8px;font-size:12px">clear all</button>');
+    chips.push(`<span class="chip"><b>${esc(k)}</b><span>${esc(v)}</span><button data-k="${esc(k)}" data-v="${esc(v)}" title="Remove this filter" aria-label="Remove">×</button></span>`);
+  if (chips.length > 1) chips.push('<button class="btn sm" data-k="__all">Clear all</button>');
   $('#crumb').innerHTML = chips.join('');
 }
 $('#crumb').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
   const k = b.dataset.k;
-  if (k === '__cat') { st.catalog = ''; st.catName = ''; st.filters = {}; renderCats(); }
-  else if (k === '__all') { st.catalog = ''; st.catName = ''; st.filters = {}; renderCats(); }
+  if (k === '__cat' || k === '__all') { st.catalog = ''; st.catName = ''; st.filters = {}; renderCats(); }
   else { st.filters[k] = (st.filters[k] || []).filter(v => v !== b.dataset.v); if (!st.filters[k].length) delete st.filters[k]; }
-  search(1);
+  resetDraft(); search();
 });
 // ---------------- facets (parametric filters): one list per parameter, a click applies it ----------------
 let draft = {}, fTimer = null;  // picks made within a moment go out as one search
+function resetDraft() { clearTimeout(fTimer); fTimer = null; draft = JSON.parse(JSON.stringify(st.filters)); }
 function renderFacets() {
   // picks made while a search was running stay (their own search follows), and so does each list's scroll and text
   if (!fTimer) draft = JSON.parse(JSON.stringify(st.filters));
   const keep = {};
-  document.querySelectorAll('.fcol').forEach(c => { keep[c.dataset.name] = [c.querySelector('input').value, c.querySelector('.vals').scrollTop]; });
-  $('#fbar').hidden = !st.facets.length && !st.parts.length;
-  $('#facets').innerHTML = st.facets.map((f, i) => `<div class="fcol" data-i="${i}" data-name="${esc(f.name)}"><div class="fh"><span>${esc(f.name)}</span><span class="n"></span></div>
-    <input type="search" placeholder="Filter" value="${esc((keep[f.name] || [''])[0])}"><div class="vals">${valsHTML(f, (keep[f.name] || [''])[0])}</div></div>`).join('');
-  document.querySelectorAll('.fcol').forEach(c => { if (keep[c.dataset.name]) c.querySelector('.vals').scrollTop = keep[c.dataset.name][1]; });
+  $$('.fcol').forEach(c => { keep[c.dataset.name] = [c.querySelector('input').value, c.querySelector('.vals').scrollTop]; });
+  $('#facets').innerHTML = st.facets.map((f, i) => `<div class="fcol" data-i="${i}" data-name="${esc(f.name)}"><div class="fh"><span title="${esc(f.name)}">${esc(f.name)}</span><button hidden title="Clear this filter"></button></div>
+    <input type="search" placeholder="Find" aria-label="Find in ${esc(f.name)}" value="${esc((keep[f.name] || [''])[0])}"${f.values.length > 8 ? '' : ' hidden'}><div class="vals">${valsHTML(f, (keep[f.name] || [''])[0])}</div></div>`).join('');
+  $$('.fcol').forEach(c => { if (keep[c.dataset.name]) c.querySelector('.vals').scrollTop = keep[c.dataset.name][1]; });
   syncFacets();
 }
 function valsHTML(f, filter) {
@@ -360,11 +440,12 @@ function valsHTML(f, filter) {
     || '<div class="mut" style="padding:2px 6px;font-size:12px">nothing</div>';
 }
 function syncFacets() {
-  document.querySelectorAll('.fcol').forEach(c => { const n = (draft[st.facets[+c.dataset.i].name] || []).length; c.querySelector('.n').textContent = n || ''; });
-  $('#fclear').disabled = !Object.keys(st.filters).length && !Object.values(draft).some(v => v.length);
+  $$('.fcol').forEach(c => { const n = (draft[st.facets[+c.dataset.i].name] || []).length, b = c.querySelector('.fh button');
+    b.hidden = !n; b.textContent = n + ' ×'; c.classList.toggle('has', !!n); });
   const hide = store.get('nofilters', false); document.body.classList.toggle('nofilters', hide);
-  const n = Object.values(st.filters).reduce((a, v) => a + v.length, 0);
-  $('#ftoggle').textContent = (hide ? '▸ ' : '▾ ') + 'Filters' + (n ? ` (${n})` : '');
+  const n = Object.values(st.filters).reduce((a, v) => a + v.length, 0), t = $('#ftoggle');
+  t.hidden = !st.facets.length; t.textContent = (hide ? '▸ ' : '▾ ') + 'Filters' + (n ? ` (${n})` : ''); t.classList.toggle('on', !!n && hide);
+  t.title = hide ? 'Show the parametric filters' : 'Hide the parametric filters';
 }
 // numeric-aware sort: 100nF before 1uF, 6.3V before 10V
 const MULT = {p:1e-12,n:1e-9,u:1e-6,'µ':1e-6,m:1e-3,k:1e3,K:1e3,M:1e6,G:1e9};
@@ -389,160 +470,301 @@ function applyFilters() {
   // narrow the loaded parts at once; LCSC's answer replaces them a moment later
   const fs = Object.entries(st.filters).filter(([k]) => k !== 'Category');
   st.parts = st.parts.filter(p => fs.every(([k, vs]) => { const v = facetVal(p, k); return v === undefined || vs.some(x => sameVal(v, x)); }));
-  renderList(); search(1, true);
+  renderList(); search({quick: true});
 }
 $('#facets').addEventListener('click', e => {
-  const v = e.target.closest('.fv'); if (!v) return;
-  const name = st.facets[+v.closest('.fcol').dataset.i].name, cur = new Set(draft[name] || []);
-  cur.has(v.dataset.v) ? cur.delete(v.dataset.v) : cur.add(v.dataset.v);
-  draft[name] = [...cur]; v.classList.toggle('on'); syncFacets();
+  const col = e.target.closest('.fcol'); if (!col) return;
+  const name = st.facets[+col.dataset.i].name;
+  if (e.target.closest('.fh button')) {   // "2 ×": clear this parameter
+    delete draft[name]; col.querySelectorAll('.fv.on').forEach(x => x.classList.remove('on'));
+  } else {
+    const v = e.target.closest('.fv'); if (!v) return;
+    const cur = new Set(draft[name] || []);
+    cur.has(v.dataset.v) ? cur.delete(v.dataset.v) : cur.add(v.dataset.v);
+    draft[name] = [...cur]; v.classList.toggle('on');
+  }
+  syncFacets();
   clearTimeout(fTimer); fTimer = setTimeout(applyFilters, 250);
 });
-// hovering a filter value starts that search (with LCSC's narrowed lists for the other filters), so the click is instant
+// resting on a filter value starts that search (with LCSC's narrowed lists for the other filters), so the click is instant
 let fvT = null;
 $('#facets').addEventListener('mouseover', e => {
-  const v = e.target.closest('.fv'); clearTimeout(fvT); if (!v) return;
+  const v = e.target.closest('.fv'); clearTimeout(fvT); if (!v || st.busy) return;
   fvT = setTimeout(() => {
-    const name = st.facets[+v.closest('.fcol').dataset.i].name, cur = new Set(draft[name] || []);
+    const col = v.closest('.fcol'); if (!col || !st.facets[+col.dataset.i]) return;
+    const name = st.facets[+col.dataset.i].name, cur = new Set(draft[name] || []);
     cur.has(v.dataset.v) ? cur.delete(v.dataset.v) : cur.add(v.dataset.v);
     const f = Object.fromEntries(Object.entries(Object.assign({}, draft, {[name]: [...cur]})).filter(e => e[1].length));
-    fetch(searchURL(st.catalog, f, 1) + '&pre=1').catch(() => {});
-  }, 120);
+    quiet(searchURL(st.catalog, f, 1) + '&pre=1');
+  }, 250);
 });
 $('#facets').addEventListener('input', e => {
   const c = e.target.closest('.fcol'); if (!c) return;
   c.querySelector('.vals').innerHTML = valsHTML(st.facets[+c.dataset.i], e.target.value);
 });
-$('#fclear').onclick = () => { clearTimeout(fTimer); fTimer = null; draft = {}; st.filters = {}; search(1); };
 $('#ftoggle').onclick = () => { store.set('nofilters', !store.get('nofilters', false)); syncFacets(); };
 // ---------------- result list ----------------
+const TOGGLES = {stock: 'In stock', basic: 'Basic', placeable: 'Placeable'};
+const shown = p => (!$('#stock').checked || p.stock > 0) && (!$('#basic').checked || p.cls === 'Basic Part') && (!$('#placeable').checked || p.placeable);
 const unit = p => p.prices[0] ? +p.prices[0].price : Infinity;
 const SORT = {stock: (a, b) => b.stock - a.stock, price: (a, b) => unit(a) - unit(b), 'price-desc': (a, b) => (unit(b) === Infinity ? -1 : unit(b)) - (unit(a) === Infinity ? -1 : unit(a))};
 function visible() {
-  const s = $('#stock').checked, b = $('#basic').checked, pl = $('#placeable').checked;
-  const rows = st.parts.filter(p => (!s || p.stock > 0) && (!b || p.cls === 'Basic Part') && (!pl || p.placeable));
+  const rows = st.parts.filter(shown);
   // LCSC sorts category listings (roughly) across all pages; the loaded rows are put in exact order here
   return st.sort ? rows.sort(SORT[st.sort]) : rows;
 }
-function syncSort() { document.querySelectorAll('#sort button').forEach(b => b.classList.toggle('on', b.dataset.s === st.sort)); }
-syncSort();
-$('#sort').onclick = e => {
-  const b = e.target.closest('button'); if (!b || b.dataset.s === st.sort) return;
-  st.sort = b.dataset.s; store.set('sort', st.sort); syncSort();
-  if (st.catalog) search(1); else renderList();
+Object.keys(TOGGLES).forEach(k => $('#' + k).onchange = () => { store.set(k, $('#' + k).checked); st.idleRun = 0; renderList(); });
+$('#m3d').onchange = () => store.set('m3d', $('#m3d').checked);
+$('#sort').onchange = () => {
+  st.sort = $('#sort').value; store.set('sort', st.sort);
+  if (st.catalog) search(); else renderList();   // LCSC sorts within a category; a keyword search is sorted here
 };
+function rowHTML(p) {
+  const tier = p.prices[0];
+  const tag = p.cls ? `<span class="tag ${p.cls === 'Basic Part' ? 'basic' : ''}" title="JLCPCB assembly: ${esc(p.cls)}">${esc(p.cls.replace(' Part', ''))}</span>` : '';
+  const specs = (p.specs || []).map(([k, v]) => `<span class="sp" title="${esc(k)}: ${esc(v)}">${esc(v)}</span>`).join('') || (p.summary ? `<span class="sum">${esc(p.summary)}</span>` : '');
+  return `<div class="part${st.sel === p.code ? ' sel' : ''}" data-code="${esc(p.code)}">
+    <div class="img">${p.image ? `<img src="${esc(p.image)}" alt="" loading="lazy" decoding="async" onerror="this.remove()">` : ''}</div>
+    <div class="info"><div class="l1"><span class="mpn" title="${esc(p.mpn)}">${esc(p.mpn)}</span>${tag}</div>
+     <div class="l2"><b>${esc(p.code)}</b>${p.package ? `<span class="pkg" title="Package">${esc(p.package)}</span>` : ''}<span>${esc(p.manufacturer)}</span>${!st.catalog && p.category ? `<span>${esc(p.category)}</span>` : ''}</div>
+     <div class="specs">${specs}</div></div>
+    <div class="tiers">${p.prices.slice(0, 3).map(x => `<span>${fmt(x.qty)}+</span><span>${price(x.price)}</span>`).join('')}</div>
+    <div class="side"><span class="stk${p.stock ? '' : ' none'}">${p.stock ? fmt(p.stock) + ' in stock' : 'Out of stock'}</span>${tier ? `<span class="p1" title="from ${fmt(tier.qty)} pcs">${price(tier.price)}</span>` : ''}
+     ${p.placeable ? `<button class="rowplace" tabindex="-1" title="Place ${esc(p.mpn)} in the schematic"${placing ? ' disabled' : ''}>${placing === p.code ? '<span class="spin"></span>' : 'Place'}</button>`
+                   : '<span class="nosym" title="LCSC has no EasyEDA symbol and footprint for this part, so it can\'t be placed">No symbol</span>'}</div></div>`;
+}
+const hiders = () => Object.keys(TOGGLES).filter(k => $('#' + k).checked).map(k => TOGGLES[k]);
+// what the list says when it has no rows: nothing asked yet, an error, nothing found, or everything hidden
+function emptyHTML() {
+  if (st.error) {
+    const e = st.error, title = {offline: 'No connection to LCSC', timeout: 'LCSC is not answering', down: 'The LCSC helper is not running'}[e.kind] || 'The search failed';
+    return `<div class="empty bad"><h3>${title}</h3><p title="${esc(e.detail || '')}">${esc(e.message)}</p><button class="btn" data-act="retry">Try again</button></div>`;
+  }
+  if (!hasQuery()) return `<div class="empty"><h3>Find a part</h3><p>Type a part number, a manufacturer's part name or a description, or pick a category.</p>
+    <p><kbd>↑</kbd> <kbd>↓</kbd> choose · <kbd>Enter</kbd> details, then place · <kbd>${/Mac|iP/.test(navigator.platform) ? '⌘' : 'Ctrl'}</kbd> <kbd>Enter</kbd> place at once · <kbd>Esc</kbd> back</p></div>`;
+  const filt = Object.keys(st.filters).length;
+  if (!st.parts.length) return `<div class="empty"><h3>No parts found</h3><p>${st.q ? `Nothing matches “${esc(st.q)}”${st.catalog ? ' in this category' : ''}${filt ? ' with these filters' : ''}.` : 'Nothing matches these filters.'}</p>
+    ${filt ? '<button class="btn" data-act="nofilters">Remove the filters</button>' : st.q && st.catalog ? '<button class="btn" data-act="nocat">Search all categories</button>' : ''}</div>`;
+  return `<div class="empty"><h3>Nothing to show yet</h3><p>The ${fmt(st.parts.length)} parts loaded so far are hidden by: ${esc(hiders().join(', '))}.</p><button class="btn" data-act="showall">Show them</button></div>`;
+}
 function renderList() {
   const rows = visible();
-  const hidden = st.parts.length - rows.length;
-  if (st.parts.length || st.total) status(`${fmt(st.total)} parts${hidden ? ` · ${hidden} of the loaded ones hidden by the options` : ''}${st.sort && !st.catalog ? ` · sorted among the ${st.parts.length} loaded (pick a category to sort all)` : ''}`);
-  const sel = st.sel && st.sel.code;
-  $('#list').innerHTML = rows.map(p => `<div class="part ${sel === p.code ? 'sel' : ''}" data-code="${esc(p.code)}">
-    <div class="img">${p.image ? `<img src="${esc(p.image)}" alt="" loading="lazy">` : '<span class="noimg"></span>'}</div>
-    <div class="info"><div class="mpn" title="${esc(p.mpn)}">${esc(p.mpn)}${p.cls ? ` <span class="tag ${p.cls === 'Basic Part' ? 'basic' : ''}" title="JLCPCB assembly: ${esc(p.cls)}">${esc(p.cls.replace(' Part', ''))}</span>` : ''}</div>
-     <div class="meta"><span>Package <b>${esc(p.package || '–')}</b></span><span><b>${esc(p.code)}</b></span><span>${esc(p.manufacturer)}</span>${p.datasheet ? `<a class="lnk" href="#" data-open="${esc(p.code)}/datasheet">Datasheet</a>` : ''}</div>
-     <div class="specs">${(p.specs || []).map(([k, v]) => `<span class="sp" title="${esc(k)}">${esc(v)}</span>`).join('') || `<span class="mut">${esc(p.summary)}</span>`}</div>
-     <div class="cat2">${esc(p.category)}</div></div>
-    <div class="tiers">${p.prices.slice(0, 5).map(x => `<span>${fmt(x.qty)}+</span><span>${price(x.price)}</span>`).join('')}</div>
-    <div class="side"><span class="stk">Stock <b class="${p.stock ? '' : 'stock0'}">${fmt(p.stock)}</b></span>${p.prices[0] ? `<span class="p1">${price(p.prices[0].price)}</span>` : ''}
-     <button class="rowplace" ${p.placeable ? '' : 'disabled title="No EasyEDA symbol/footprint"'}>Place</button></div></div>`).join('') +
-   (st.parts.length < st.total ? '<div id="sentinel"><span class="spin"></span></div>' : '');
-  const m = $('#sentinel'); if (m) more.observe(m);
+  $('#list').innerHTML = (rows.length ? rows.map(rowHTML).join('') : st.busy ? '<div class="skel"></div>'.repeat(8) : emptyHTML()) + '<div id="tail"></div>';
+  renderTail(); renderStatus();
 }
-// next page when the end of the list scrolls into view
-const more = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting) && !document.body.classList.contains('loading') && st.parts.length < st.total) search(st.page + 1); }, {root: $('#list'), rootMargin: '300px'});
-// hovering a part starts converting it, so its detail view usually opens at once
+// the end of the list: more on the way, a failed page, a pause, or the end
+function renderTail() {
+  const t = $('#tail'); if (!t) return;
+  const left = st.page && st.parts.length < st.total && !st.error;
+  let h = '';
+  if (st.moreError) h = `<span class="err" title="${esc(st.moreError.detail || '')}">Couldn't load more: ${esc(st.moreError.message)}</span> <button class="btn sm" data-act="more">Retry</button>`;
+  else if (left && st.idleRun >= 3) h = `<span>The last ${fmt(st.idleRun * 30)} parts were all hidden by: ${esc(hiders().join(', '))}.</span> <button class="btn sm" data-act="more">Keep looking</button>`;
+  else if (left) h = '<span class="spin"></span>';
+  else if (st.found > st.total && st.parts.length) h = `<span>These are the first ${fmt(st.total)} of ${fmt(st.found)} matches. Add a word or pick a category to narrow them down.</span>`;
+  t.innerHTML = h;
+  more.unobserve(t); if (left && !st.moreError && st.idleRun < 3) more.observe(t);   // still in view: the next page follows
+}
+function renderStatus() {
+  let h = '';
+  if (st.busy) h = st.parts.length ? `<b>${fmt(st.total)}</b> parts · updating…` : 'Searching…';
+  else if (hasQuery() && !st.error && st.page) {
+    const hidden = st.parts.length - st.parts.filter(shown).length;
+    h = `<b>${fmt(st.total)}</b> part${st.total === 1 ? '' : 's'}`;
+    if (st.found > st.total) h += ` of ${fmt(st.found)} found`;
+    if (hidden) h += ` · ${fmt(hidden)} of the ${fmt(st.parts.length)} loaded hidden by ${esc(hiders().join(', '))} · <a href="#" data-act="showall">show</a>`;
+    if (st.sort && !st.catalog) h += ' · sorted among the loaded parts (pick a category to sort all)';
+    if (st.stale) h += ` · <span class="warn">saved ${ago(st.stale)} ago: LCSC can't be reached</span> · <a href="#" data-act="retry">retry</a>`;
+  }
+  $('#status').innerHTML = h; $('#status').hidden = !h;
+}
+// The next page loads when the end of the list is some 15 rows away, so scrolling rarely catches up with it (and
+// nothing is asked of LCSC for a list nobody scrolls). Pauses after three pages that showed nothing new.
+const more = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting) && !st.moreError && st.idleRun < 3) loadMore(); }, {root: $('#list'), rootMargin: '1100px'});
+function act(a) {
+  if (a === 'retry') search();
+  else if (a === 'more') { st.idleRun = 0; st.moreError = null; loadMore(); }
+  else if (a === 'showall') { Object.keys(TOGGLES).forEach(k => { $('#' + k).checked = false; store.set(k, false); }); st.idleRun = 0; renderList(); }
+  else if (a === 'nofilters') { st.filters = {}; resetDraft(); search(); }
+  else if (a === 'nocat') { st.catalog = ''; st.catName = ''; st.filters = {}; resetDraft(); renderCats(); search(); }
+}
+$('#status').addEventListener('click', e => { const a = e.target.closest('[data-act]'); if (a) { e.preventDefault(); act(a.dataset.act); } });
+// resting on a part starts converting it, so its details usually open at once
 const warmed = new Set(); let hoverT = null;
-$('#list').addEventListener('mouseover', e => {
-  const r = e.target.closest('.part'); if (!r || warmed.has(r.dataset.code)) return;
+function prepare(code, wait) {
   clearTimeout(hoverT);
-  hoverT = setTimeout(() => { const p = st.parts.find(x => x.code === r.dataset.code); if (!p || !p.placeable) return; warmed.add(p.code); fetch('/api/prepare/' + p.code).catch(() => {}); }, 120);
-});
+  if (!code || warmed.has(code)) return;
+  hoverT = setTimeout(() => { const p = byCode(code); if (!p || !p.placeable) return; warmed.add(code); quiet('/api/prepare/' + code); }, wait);
+}
+$('#list').addEventListener('mouseover', e => { const r = e.target.closest('.part'); if (r) prepare(r.dataset.code, 150); });
 $('#list').addEventListener('click', e => {
+  const a = e.target.closest('[data-act]'); if (a) { e.preventDefault(); act(a.dataset.act); return; }
   const r = e.target.closest('.part'); if (!r) return;
-  const p = st.parts.find(x => x.code === r.dataset.code), b = e.target.closest('.rowplace');
-  if (b) { if (p.placeable) place(p, store.get('symstyle', 'kicad') === 'easyeda', b); return; }
-  if (e.target.closest('a')) return;
+  const p = byCode(r.dataset.code); if (!p) return;
+  if (e.target.closest('.rowplace')) { select(p.code); place(p, store.get('symstyle', 'kicad') === 'easyeda'); return; }
   openDetail(p);
 });
-$('#list').addEventListener('dblclick', e => {
-  const r = e.target.closest('.part'); if (!r || e.target.closest('.rowplace')) return;
-  const p = st.parts.find(x => x.code === r.dataset.code); if (p && p.placeable) place(p, useEasyeda(st.detail), r.querySelector('.rowplace'));
+// ---------------- selection and keys ----------------
+function select(code, scroll) {
+  st.sel = code || '';
+  $$('.part.sel').forEach(r => r.classList.remove('sel'));
+  const row = code && $(`.part[data-code="${CSS.escape(code)}"]`);
+  if (row) { row.classList.add('sel'); if (scroll) row.scrollIntoView({block: 'nearest'}); }
+  return row;
+}
+let followT = null;
+function move(d) {
+  const rows = $$('#list .part'); if (!rows.length) return;
+  const i = rows.findIndex(r => r.dataset.code === st.sel);
+  const row = rows[Math.max(0, Math.min(rows.length - 1, i < 0 ? (d > 0 ? 0 : rows.length - 1) : i + d))];
+  select(row.dataset.code, true);
+  if (document.body.classList.contains('showdetail')) {   // open details follow the selection, once it rests
+    clearTimeout(followT); followT = setTimeout(() => { const p = byCode(st.sel); if (p) openDetail(p); }, 140);
+  } else prepare(row.dataset.code, 250);
+}
+const detailOpen = () => document.body.classList.contains('showdetail');
+function closeDetail() {
+  if (!detailOpen()) return;
+  clearTimeout(followT); dseq++; st.open = null; st.detail = null;
+  document.body.classList.remove('showdetail'); $('#pmenu').hidden = true;
+  if (!document.activeElement || document.activeElement === document.body || $('#detail').contains(document.activeElement)) $('#q').focus({preventScroll: true});
+}
+document.addEventListener('keydown', e => {
+  const t = e.target, inQ = t === $('#q'), other = !inQ && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName), mod = e.metaKey || e.ctrlKey;
+  if (e.key === 'Escape') {
+    const big = $('.pvbox.big');
+    if (big) big.classList.remove('big');
+    else if (!$('#pmenu').hidden) $('#pmenu').hidden = true;
+    else if (document.body.classList.contains('showcats')) document.body.classList.remove('showcats');
+    else if (detailOpen()) closeDetail();
+    else if (other && t.value) return;          // a filter box clears itself
+    else if (st.sel) select('');
+    else return;                                // nothing of ours to close: the search box's own Esc
+    e.preventDefault(); return;
+  }
+  if (other) return;   // the category / filter boxes keep their keys
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { if (e.altKey || mod || e.shiftKey) return; e.preventDefault(); move(e.key === 'ArrowDown' ? 1 : -1); }
+  else if (e.key === 'PageDown' || e.key === 'PageUp') { e.preventDefault(); move((e.key === 'PageDown' ? 1 : -1) * Math.max(1, Math.floor($('#list').clientHeight / 72) - 1)); }
+  else if (e.key === 'Enter') {
+    if (!inQ && t.closest('button, a, summary')) return;   // that control's own Enter
+    e.preventDefault();
+    if (inQ && submitQuery()) return;                       // typed something new: search it now
+    const sel = byCode(st.sel);
+    if (detailOpen() && !mod) { if (st.open && st.open.placeable) place(st.open, useEasyeda(st.detail)); return; }
+    if (mod) { const p = (detailOpen() && st.open) || sel || firstRow(); if (p && p.placeable) { select(p.code, true); place(p, store.get('symstyle', 'kicad') === 'easyeda'); } return; }
+    const p = sel || firstRow(); if (p) openDetail(p);
+  }
+  else if ((e.key === '/' && !inQ && !mod) || (mod && (e.key === 'f' || e.key === 'k'))) { e.preventDefault(); $('#q').focus(); $('#q').select(); }
+  else if (!inQ && !mod && !e.altKey && e.key.length === 1 && e.key !== ' ' && !t.closest('button, a')) $('#q').focus();  // typing anywhere goes to the search box
 });
+function firstRow() { const r = $('#list .part'); return r ? byCode(r.dataset.code) : null; }
 // ---------------- detail ----------------
 let dseq = 0;
 async function openDetail(p) {
-  const my = ++dseq; st.sel = p;
-  document.querySelectorAll('.part.sel').forEach(r => r.classList.remove('sel'));
-  const row = document.querySelector(`.part[data-code="${CSS.escape(p.code)}"]`); if (row) row.classList.add('sel');
+  if (detailOpen() && st.open && st.open.code === p.code) { select(p.code, true); return; }
+  const my = ++dseq; st.open = p; st.detail = null;
+  select(p.code, true);
   document.body.classList.add('showdetail');
-  $('#dtitle').textContent = p.mpn; $('#dsub').innerHTML = [esc(p.code), esc(p.manufacturer), p.url ? `<a href="${esc(p.url)}" data-open="${esc(p.code)}/lcsc">LCSC page</a>` : ''].filter(Boolean).join(' · ');
-  st.detail = null; $('#pmenu').hidden = true;
-  $('#placebtn').disabled = $('#placemenu').disabled = !p.placeable; $('#pstat').textContent = p.placeable ? '' : 'No EasyEDA symbol/footprint for this part';
-  $('#dbody').innerHTML = `<div class="pv"><div class="pvbox sym"><span class="lbl">symbol</span>${p.placeable ? '<span class="spin"></span>' : ''}</div>
-    <div class="pvbox fp"><span class="lbl">footprint</span>${p.placeable ? '<span class="spin"></span>' : ''}</div></div>
-    <div class="dcols"><div id="dinfo"></div><div>${p.image_big ? `<img class="photo" src="${esc(p.image_big)}" alt="">` : ''}${priceTable(p)}</div></div>`;
+  $('#dtitle').textContent = p.mpn; $('#dtitle').title = p.mpn;
+  $('#dsub').innerHTML = [`<span>${esc(p.code)}</span>`, p.manufacturer ? `<span>${esc(p.manufacturer)}</span>` : '', p.package ? `<span>${esc(p.package)}</span>` : '',
+    p.datasheet ? `<a href="#" data-open="${esc(p.code)}/datasheet">Datasheet</a>` : '', p.url ? `<a href="#" data-open="${esc(p.code)}/lcsc">LCSC page</a>` : ''].join('');
+  $('#pmenu').hidden = true; syncPlace();
+  const wait = p.placeable ? '<span class="spin"></span>' : '<span>none</span>';
+  $('#dbody').innerHTML = `<div class="pv"><div class="pvbox sym"><span class="lbl">symbol</span>${wait}</div><div class="pvbox fp"><span class="lbl">footprint</span>${wait}</div></div>
+    <div class="dcols"><div id="dinfo">${p.placeable ? '' : '<p class="mut">LCSC has no EasyEDA symbol and footprint for this part, so it can\'t be placed.</p>'}${rowSpecs(p)}</div>
+    <div>${p.image_big ? `<img class="photo" src="${esc(p.image_big)}" alt="" onerror="this.remove()">` : ''}${p.bare ? '' : priceTable(p)}</div></div>`;
+  $('#dbody').scrollTop = 0;
   if (!p.placeable) return;
   try {
-    const d = await getJSON('/api/detail/' + p.code);
+    const d = await getJSON(`/api/detail/${p.code}?3d=${$('#m3d').checked ? 1 : 0}`, {timeout: 100000});
     if (my !== dseq) return;
-    const t = Date.now();
-    st.detail = d;
-    symPreview(p, d, t);
-    document.querySelector('.pvbox.fp').innerHTML = `<span class="lbl">footprint</span>`;
-    loadSvg('.pvbox.fp', `/preview/${p.code}/footprint.svg?t=${t}`);
-    $('#dinfo').innerHTML = `<h4>Specs</h4><table>${d.specs.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${k === 'Datasheet' ? `<a href="${esc(v)}" data-open="${esc(d.code)}/datasheet">open</a>` : esc(v)}</td></tr>`).join('')}
+    st.detail = d; syncPlace();
+    if (p.bare) {   // opened by its number alone: its name comes with the detail
+      const sp = Object.fromEntries(d.specs), name = sp['Manufacturer Part'] || p.code;
+      $('#dtitle').textContent = $('#dtitle').title = name;
+      if (sp.Manufacturer) $('#dsub').insertAdjacentHTML('beforeend', `<span>${esc(sp.Manufacturer)}</span>`);
+    }
+    $('#dinfo').innerHTML = `<h4>Specs</h4><table>${d.specs.filter(([, v]) => v !== '-').map(([k, v]) => `<tr><td>${esc(k)}</td><td>${k === 'Datasheet' ? `<a href="#" data-open="${esc(d.code)}/datasheet">open</a>` : esc(v)}</td></tr>`).join('')}
       <tr><td>KiCad symbol</td><td>${d.stock ? `standard ${esc(d.stock)} (pins mapped to the pads)` : 'converted from EasyEDA'} · ${d.pins} pins${d.units > 1 ? ' · ' + d.units + ' units' : ''}</td></tr>
       <tr><td>KiCad footprint</td><td>${esc(d.footprint)}</td></tr><tr><td>3D model</td><td>${d.has_3d ? 'yes (STEP)' : 'no'}</td></tr></table>`;
-  } catch (e) { if (my === dseq) { $('#dinfo').innerHTML = `<p class="err">${esc(e.message)}</p>`; document.querySelectorAll('.pvbox .spin').forEach(s => s.remove()); } }
+    symPreview(p, d, my);
+    loadSvg($('.pvbox.fp'), `/preview/${p.code}/footprint.svg`, my, 'footprint');
+  } catch (e) {
+    if (my !== dseq) return;
+    $$('.pvbox .spin').forEach(s => s.replaceWith(Object.assign(document.createElement('span'), {textContent: 'no preview'})));
+    $('#dinfo').insertAdjacentHTML('afterbegin', `<p class="err" title="${esc(e.detail || '')}">This part couldn't be prepared: ${esc(e.message)} <button class="btn sm" id="dretry">Try again</button></p>`);
+    $('#dretry').onclick = () => { const q = st.open; st.open = null; if (q) openDetail(q); };
+  }
+}
+// what the result list already knows, shown until (and unless) the part's own data arrives
+function rowSpecs(p) {
+  const rows = (p.specs || []).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('');
+  return rows || p.summary ? `<h4>Specs</h4>${rows ? `<table>${rows}</table>` : `<p>${esc(p.summary)}</p>`}` : '';
 }
 // symbol preview: KiCad's standard drawing or EasyEDA's (the choice is remembered and is what Place uses)
 function useEasyeda(d) { return !!(d && d.stock && store.get('symstyle', 'kicad') === 'easyeda'); }
-function symPreview(p, d, t) {
+function symPreview(p, d, my) {
   const ez = useEasyeda(d), n = ez ? d.units_easyeda : d.units, v = ez ? '&v=easyeda' : '';
-  const units = n > 1 ? `<select id="unit">${Array.from({length: n}, (_, i) => `<option value="${i + 1}">unit ${String.fromCharCode(65 + i)}</option>`).join('')}</select>` : '';
+  const units = n > 1 ? `<select id="unit" aria-label="Unit">${Array.from({length: n}, (_, i) => `<option value="${i + 1}">unit ${String.fromCharCode(65 + i)}</option>`).join('')}</select>` : '';
   const seg = d.stock ? `<span class="seg"><button data-v="kicad" class="${ez ? '' : 'on'}" title="KiCad standard symbol ${esc(d.stock)}">KiCad</button><button data-v="easyeda" class="${ez ? 'on' : ''}" title="EasyEDA's own symbol">EasyEDA</button></span>` : '';
-  const box = document.querySelector('.pvbox.sym');
-  box.innerHTML = `<span class="lbl">symbol${seg} ${units}</span>`;
-  loadSvg('.pvbox.sym', `/preview/${p.code}/symbol.svg?t=${t || Date.now()}${v}`);
-  box.querySelectorAll('.seg button').forEach(b => b.onclick = e => { e.stopPropagation(); store.set('symstyle', b.dataset.v); symPreview(p, d); });
-  const u = $('#unit'); if (u) { u.onclick = e => e.stopPropagation(); u.onchange = () => loadSvg('.pvbox.sym', `/preview/${p.code}/symbol.svg?unit=${u.value}${v}`); }
+  const box = $('.pvbox.sym'); if (!box) return;
+  box.classList.remove('has', 'big');
+  box.innerHTML = `<span class="lbl">symbol${seg} ${units}</span><span class="spin"></span>`;
+  loadSvg(box, `/preview/${p.code}/symbol.svg?unit=1${v}`, my, 'symbol');
+  box.querySelectorAll('.seg button').forEach(b => b.onclick = e => { e.stopPropagation(); store.set('symstyle', b.dataset.v); symPreview(p, d, my); });
+  const u = $('#unit'); if (u) { u.onclick = e => e.stopPropagation(); u.onchange = () => loadSvg(box, `/preview/${p.code}/symbol.svg?unit=${u.value}${v}`, my, 'symbol'); }
 }
-// kicad-cli draws on a whole page: inline the SVG and crop its viewBox to the drawing
-async function loadSvg(sel, url) {
-  const box = document.querySelector(sel); if (!box) return;
+// kicad-cli draws on a whole page: inline the SVG and crop its viewBox to the drawing. Only the newest request for
+// a box may fill it (unit and style switches, another part opened meanwhile).
+const svgSeq = {};
+async function loadSvg(box, url, my, kind) {
+  if (!box) return;
+  const mine = svgSeq[kind] = (svgSeq[kind] || 0) + 1, current = () => my === dseq && mine === svgSeq[kind] && box.isConnected;
+  const fill = el => { box.querySelectorAll('svg, .spin, .nopv').forEach(x => x.remove()); box.appendChild(el); };
   try {
     const r = await fetch(url); if (!r.ok) throw new Error();
     const doc = new DOMParser().parseFromString(await r.text(), 'image/svg+xml');
+    if (!current()) return;
     const svg = document.importNode(doc.documentElement, true);
+    if (svg.nodeName.toLowerCase() !== 'svg') throw new Error();
     svg.querySelectorAll('rect').forEach(x => { if (+x.getAttribute('width') > 200) x.remove(); });  // page background
-    box.querySelectorAll('svg').forEach(x => x.remove());
     svg.removeAttribute('width'); svg.removeAttribute('height');
     svg.style.cssText = 'width:100%;height:100%';
-    box.appendChild(svg);
+    fill(svg); box.classList.add('has');
     const b = svg.getBBox(), m = Math.max(b.width, b.height) * 0.06 + 0.5;
     if (b.width && b.height) svg.setAttribute('viewBox', `${b.x - m} ${b.y - m} ${b.width + 2 * m} ${b.height + 2 * m}`);
-  } catch (e) { box.insertAdjacentHTML('beforeend', '<span class="mut">no preview</span>'); }
+  } catch (e) { if (current()) { box.classList.remove('has'); fill(Object.assign(document.createElement('span'), {className: 'nopv', textContent: 'no preview'})); } }
 }
 function priceTable(p) {
-  if (!p.prices.length) return '';
-  return `<h4>Price (USD) · stock ${fmt(p.stock)}</h4><table>${p.prices.map(x => `<tr><td>${fmt(x.qty)}+</td><td>$${esc(x.price)}</td></tr>`).join('')}</table>`;
+  const head = `<h4>Price (USD) · ${p.stock ? fmt(p.stock) + ' in stock' : 'out of stock'}</h4>`;
+  return p.prices.length ? `${head}<table>${p.prices.map(x => `<tr><td>${fmt(x.qty)}+</td><td>${price(x.price)}</td></tr>`).join('')}</table>` : head;
 }
-$('#dbody').addEventListener('click', e => { const b = e.target.closest('.pvbox'); if (b && b.querySelector('svg')) b.classList.toggle('big'); });
-$('#back').onclick = () => document.body.classList.remove('showdetail');
-$('#detail').addEventListener('click', e => { if (e.target === $('#detail')) document.body.classList.remove('showdetail'); });
-document.addEventListener('keydown', e => {
-  if (e.key !== 'Escape') return;
-  const big = document.querySelector('.pvbox.big'); if (big) { big.classList.remove('big'); return; }
-  document.body.classList.remove('showdetail', 'showcats');
-});
+$('#dbody').addEventListener('click', e => { const b = e.target.closest('.pvbox'); if (b && b.querySelector('svg') && !e.target.closest('.lbl')) b.classList.toggle('big'); });
+$('#back').onclick = closeDetail;
+$('#detail').addEventListener('click', e => { if (e.target === $('#detail')) closeDetail(); });
 // links open in the system browser (KiCad's panel would open them inside itself)
 document.addEventListener('click', e => {
   const a = e.target.closest('a[data-open]'); if (!a) return;
   e.preventDefault();
-  fetch('/api/open/' + a.dataset.open, {method: 'POST'}).catch(() => {});
+  quiet('/api/open/' + a.dataset.open, {method: 'POST'});
 });
 // ---------------- place ----------------
-$('#placebtn').onclick = () => place(st.sel, useEasyeda(st.detail), $('#placebtn'));
+let placing = '', toastT = null, closeHint = false;
+function toast(kind, html, sub) {
+  clearTimeout(toastT);
+  const t = $('#toast'); t.className = kind; t.hidden = false;
+  t.innerHTML = `${kind === 'busy' ? '<span class="spin" style="margin-top:2px"></span>' : ''}<div class="msg">${html}${sub ? `<small>${sub}</small>` : ''}</div>${kind === 'busy' ? '' : '<button aria-label="Dismiss" title="Dismiss">×</button>'}`;
+  if (kind === 'ok') toastT = setTimeout(() => { t.hidden = true; }, 9000);
+}
+$('#toast').addEventListener('click', e => { if (e.target.closest('button')) $('#toast').hidden = true; });
+// every Place control follows the one placement that may be under way
+function syncPlace() {
+  const p = st.open, can = !!(p && p.placeable) && !placing;
+  $('#placebtn').disabled = $('#placemenu').disabled = !can;
+  $('#placebtn').innerHTML = placing && p && placing === p.code ? '<span class="spin"></span>' : 'Place';
+  $('#placebtn').title = p && !p.placeable ? 'No EasyEDA symbol and footprint for this part' : 'Place this part in the schematic (Enter)';
+  $$('.rowplace').forEach(b => { const code = b.closest('.part').dataset.code; b.disabled = !!placing; b.innerHTML = placing === code ? '<span class="spin"></span>' : 'Place'; });
+}
+$('#placebtn').onclick = () => place(st.open, useEasyeda(st.detail));
 $('#placemenu').onclick = e => {
   e.stopPropagation();
   const m = $('#pmenu'), d = st.detail;
@@ -550,42 +772,54 @@ $('#placemenu').onclick = e => {
   m.innerHTML = d && d.stock
     ? `<button data-ez="0">Place with KiCad symbol<small>standard ${esc(d.stock)}, pins mapped to the pads</small></button>
        <button data-ez="1">Place with EasyEDA symbol<small>the part's own drawing from the EasyEDA library</small></button>`
-    : `<button data-ez="1">Place<small>${d ? 'no KiCad standard symbol for this part: EasyEDA\'s drawing' : 'loading part…'}</small></button>`;
+    : `<button data-ez="1">Place<small>${d ? 'no KiCad standard symbol for this part: EasyEDA\'s drawing' : 'the part is still being prepared'}</small></button>`;
   m.hidden = false;
 };
-$('#pmenu').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; $('#pmenu').hidden = true; place(st.sel, b.dataset.ez === '1', $('#placebtn')); });
+$('#pmenu').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; $('#pmenu').hidden = true; place(st.open, b.dataset.ez === '1'); });
 document.addEventListener('click', e => { if (!e.target.closest('.split')) $('#pmenu').hidden = true; });
-// b: the Place button pressed (row or dialog); progress goes to the dialog's line or the list's status line
-async function place(p, easyeda, b) {
-  if (!p) return;
-  const inDlg = b === $('#placebtn'), label = b.textContent;
-  const say = (html, err) => { if (inDlg) { $('#pstat').innerHTML = html; $('#pstat').className = err ? 'err' : 'mut'; } else status(html, err); };
-  b.disabled = true; if (!inDlg) b.innerHTML = '<span class="spin"></span>';
+// One part at a time: KiCad puts it on the cursor, so a second Place while the first is on its way (a double
+// click, Enter twice, the row's button and the dialog's) would only replace it or fail.
+async function place(p, easyeda) {
+  if (!p || !p.placeable || placing) return;
+  placing = p.code; syncPlace();
+  const name = `<b>${esc(p.mpn)}</b>`, with3d = $('#m3d').checked;
   try {
-    say(`<span class="spin"></span> ${esc(p.mpn)}: preparing` + ($('#m3d').checked ? ' (incl. 3D model)' : '') + '…');
-    const man = await getJSON(`/api/manifest/${p.code}?3d=${$('#m3d').checked ? 1 : 0}${easyeda ? '&sym=easyeda' : ''}`);
-    say(`<span class="spin"></span> ${esc(p.mpn)}: KiCad is downloading…`);
+    toast('busy', `Preparing ${name}${with3d ? ' with its 3D model' : ''}…`);
+    const man = await getJSON(`/api/manifest/${p.code}?3d=${with3d ? 1 : 0}${easyeda ? '&sym=easyeda' : ''}`, {timeout: 240000});
+    toast('busy', `KiCad is adding ${name} to the project's library…`);
     // KiCad 10 fails the first save into a not-yet-existing remote library; the retry finds it
     try { await rpc('PLACE_COMPONENT', man); }
     catch (e) { if (!/save the downloaded symbol/i.test(e.message)) throw e; await rpc('PLACE_COMPONENT', man); }
-    say(`${esc(p.mpn)} is on the cursor: click in the schematic to place it.`);
-    document.body.classList.remove('showdetail');
-    fetch('/api/placed/' + p.code, {method: 'POST'}).catch(() => {});  // provider makes the project's library paths relative
-    getJSON('/api/close-panel', {method: 'POST'}).catch(e => say(`${esc(p.mpn)} is on the cursor. Couldn't close this panel: ${esc(e.message)}`, true));
-  } catch (e) { say(esc(e.message), true); }
-  b.disabled = false; b.textContent = label;
+    const no3d = with3d && !man.assets.some(a => a.asset_type === '3dmodel');
+    toast('ok', `${name} is on the cursor. Click in the schematic to put it down.`, no3d ? 'Placed without a 3D model: LCSC has none for this part, or it couldn\'t be downloaded.' : '');
+    if (!matchMedia('(min-width:1040px)').matches) closeDetail();   // the dialog covers the list; docked details stay
+    quiet('/api/placed/' + p.code, {method: 'POST'});  // provider makes the project's library paths relative
+    getJSON('/api/close-panel', {method: 'POST'}).catch(e => {   // works once macOS allows it; say so once, not as a failure
+      if (closeHint || !/System Settings/.test(e.message)) return;
+      closeHint = true;
+      toast('ok', `${name} is on the cursor. Click in the schematic to put it down.`, 'This window can close itself after Place: ' + esc(e.message.replace(/^.*?: /, '')));
+    });
+  } catch (e) {
+    toast('bad', `${name} was not placed: ${esc(e.message)}`, e.kind === 'offline' || e.kind === 'timeout' ? 'Nothing was added to the schematic. Try again when LCSC can be reached.' : 'Nothing was added to the schematic.');
+  }
+  placing = ''; syncPlace();
 }
-// start state from the URL (deep links): ?q=…&cat=<id>&f=<json>&code=C…
-(async () => {
-  await loadCats();
-  const P = new URLSearchParams(location.search);
-  if (P.get('cat')) { st.catalog = P.get('cat'); for (const c of tree) for (const x of [c, ...c.children]) if (String(x.id) === st.catalog) st.catName = x.name; renderCats(); }
-  try { st.filters = JSON.parse(P.get('f') || '{}'); } catch (e) {}
-  if (P.get('q')) { st.q = P.get('q'); $('#q').value = st.q; }
-  const last = !location.search && store.get('last', null);  // the panel opens where it was left
-  if (last) { st.q = last.q || ''; $('#q').value = st.q; st.catalog = last.cat || ''; st.catName = last.catName || ''; st.filters = last.f || {}; renderCats(); }
-  if (st.q || st.catalog) await search(1);
-  const code = P.get('code'); if (code) openDetail(st.parts.find(p => p.code === code) || {code, mpn: code, manufacturer: '', url: '', prices: [], placeable: true});
+// the result rows adapt to the width of the list (a docked panel is narrow), whatever the window's width
+new ResizeObserver(es => { const w = es[0].contentRect.width, r = $('#results'); r.classList.toggle('narrow', w < 600); r.classList.toggle('tiny', w < 400); }).observe($('#results'));
+// ---------------- start ----------------
+// KiCad loads this page every time the panel is shown, so it starts where it was left (deep links: ?q=…&cat=<id>&f=<json>&code=C…)
+(() => {
+  const P = new URLSearchParams(location.search), last = !location.search && store.get('last', null);
+  if (last) Object.assign(st, {q: last.q || '', catalog: last.cat || '', catName: last.catName || '', filters: last.f || {}});
+  else {
+    st.q = (P.get('q') || '').trim(); st.catalog = P.get('cat') || '';
+    try { const f = JSON.parse(P.get('f') || '{}'); if (f && typeof f === 'object') st.filters = f; } catch (e) {}
+  }
+  $('#q').value = st.q; if (st.catalog && !st.catName) st.catName = catName(st.catalog);
+  resetDraft(); loadCats();   // categories and the search load side by side
+  const first = hasQuery() ? search() : (renderFacets(), renderList(), null);
+  const code = (P.get('code') || '').toUpperCase();
+  if (/^C\d+$/.test(code)) Promise.resolve(first).then(() => openDetail(byCode(code) || {code, mpn: code, manufacturer: '', package: '', url: '', prices: [], stock: 0, specs: [], placeable: true, bare: true}));
+  $('#q').focus(); if (st.q) $('#q').select();   // typing replaces the last search
 })();
-$('#q').focus();
 </script></body></html>

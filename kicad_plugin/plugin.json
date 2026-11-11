@@ -18,7 +18,7 @@
     {
       "identifier": "lcsc-parts",
       "name": "LCSC parts",
-      "description": "Start the LCSC search for the Remote Symbols panel",
+      "description": "Open the LCSC parts browser (Remote Symbols panel): search, filter, place parts with symbol, footprint and 3D model",
       "show-button": true,
       "scopes": ["schematic"],
       "entrypoint": "lcsc_parts.sh",
