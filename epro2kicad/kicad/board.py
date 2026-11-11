@@ -9,15 +9,15 @@ import re
 from dataclasses import dataclass, field
 
 from .. import geom
-from ..easyeda.project import Doc, Project, ttf_key
+from ..easyeda.project import Doc, Project
 from ..easyeda.records import Rec
 from ..easyeda.rules import Rules, parse_rules
 from ..sexp import NO, YES, Sym, loads, stable_uuid
 from . import layers as L
 from . import textfit
-from .footprint import (MIL, Footprint, FpOptions, Graphic, Pad, Text, convert_footprint, footprint_board_sexp,
-                        graphic_sexp, krot, mm, norm_deg, origin_justify, pad_sexp, rnd, sane_name, zone_sexp,
-                        _region_zone, _shape_graphics)
+from .footprint import (MIL, Footprint, FpOptions, Graphic, Pad, Text, Zone, convert_footprint, fit_string,
+                        footprint_board_sexp, graphic_sexp, krot, mm, norm_deg, rnd, sane_name, zone_sexp,
+                        _npth_from_fill, _region_zone, _shape_graphics)
 
 TEMPLATES = os.path.join(os.path.dirname(__file__), "templates")
 
@@ -54,6 +54,9 @@ class BoardResult:
     # applied by kicad/fillfix.py with KiCad's polygon engine
     fill_fixes: dict = field(default_factory=dict)
     net_colors: dict = field(default_factory=dict)  # net -> "rgb(r, g, b)"
+    severities: dict = field(default_factory=dict)  # DRC checks whose severity differs from KiCad's default
+    unfilled: list = field(default_factory=list)  # uuids of pours EasyEDA never built: KiCad fills these
+    retune: object = None  # retune(mm) -> (net classes, constraints, custom rules) checked that much more leniently
 
 
 def mm_to_mil(v: float) -> float:
@@ -110,6 +113,7 @@ class BoardConverter:
         self.sch_links = sch_links or {}
         self.net_rename = net_rename or {}
         self.pad_override = pad_nets_override or {}
+        self.tolerance = 0.0  # mm the DRC minimums are lowered by (see design_rules)
         self.models = models or {}
         self.pin_info = pin_info or {}
         self.flip_offset = flip_angle_offset
@@ -140,7 +144,8 @@ class BoardConverter:
         self.group_of = {r.id: str(r.d["groupId"]) for r in doc.recs
                          if r.d.get("groupId") not in (None, 0, "0", "") and r.type != "REUSE_BLOCK"}
         self.group_members: dict[str, list] = {}
-        self.fp_opts = FpOptions(default_mask_mil=self.rules.mask, default_paste_mil=self.rules.paste)
+        self.fp_opts = FpOptions(default_mask_mil=self.rules.mask, default_paste_mil=self.rules.paste,
+                                 courtyard_margin=mm(self.rules.device_clearance or 0.0) / 2)
         self.offset = (0.0, 0.0)
         self.items: list = []
         self.nets: set[str] = set()
@@ -181,10 +186,16 @@ class BoardConverter:
         attrs_by_parent: dict[str, list[Rec]] = {}
         for a in doc.of("ATTR"):
             attrs_by_parent.setdefault(str(a.d.get("parentId") or ""), []).append(a)
+        # component -> {pad id: (pad number, net), "#" + pad number: net}.  The number is what EasyEDA goes by; the
+        # ids can be those of an older revision of the footprint (seen shifted by one), so an id only counts when
+        # it names a pad with that number: then it tells pads apart that share a number
         padnets: dict[str, dict] = {}
         for r in doc.of("PAD_NET"):
-            padnets.setdefault(str(r.d.get("parentId")), {})[str(r.d.get("padId") or r.d.get("num"))] = r.d.get("padNet") or ""
-            padnets[str(r.d.get("parentId"))]["#" + str(r.d.get("num"))] = r.d.get("padNet") or ""
+            pn = padnets.setdefault(str(r.d.get("parentId")), {})
+            num, net = str(r.d.get("num")), r.d.get("padNet") or ""
+            if r.d.get("padId"):
+                pn[str(r.d["padId"])] = (num, net)
+            pn.setdefault("#" + num, net)
         fps_sexp = []
         for c in comps:
             n = self._component(c, attrs_by_parent.get(c.id, []), padnets.get(c.id, {}))
@@ -207,7 +218,9 @@ class BoardConverter:
                 elif t == "POLY":
                     self._poly(r, gr, segs)
                 elif t == "FILL":
-                    self._fill(r, gr)
+                    z = self._fill(r, gr, fps_sexp)
+                    if z:
+                        zones.append(z)
                 elif t == "POUR":
                     z = self._pour(r)
                     if z:
@@ -238,7 +251,8 @@ class BoardConverter:
         board = [Sym("kicad_pcb")] + body
         netclasses, rules_cfg, dru, tw, vd = self._design_rules()
         return BoardResult(board, self.lib_fps, netclasses, rules_cfg, dru, self.nets, self.warn, self.stats,
-                           self.pad_nets, tw, vd, self.page, getattr(self, "fill_fixes", {}), self.net_colors())
+                           self.pad_nets, tw, vd, self.page, getattr(self, "fill_fixes", {}), self.net_colors(),
+                           getattr(self, "severities", {}), getattr(self, "unfilled", []), self.design_rules)
 
     # ------------------------------------------------------------------ layout
     def _outline_points(self):
@@ -428,9 +442,8 @@ class BoardConverter:
             des = link[3]["Reference"]
         # nets
         for p in fp.pads:
-            nn = padnets.get(p.src_id)
-            if nn is None:
-                nn = padnets.get("#" + p.number)
+            by_id = padnets.get(p.src_id)
+            nn = by_id[1] if isinstance(by_id, tuple) and by_id[0] == p.number else padnets.get("#" + p.number)
             if p.kind == "np_thru_hole" and not p.number:
                 nn = None
             if des and p.number:
@@ -462,17 +475,17 @@ class BoardConverter:
                 self._place_field(val, vattr, pos, kangle, back)
             else:  # EasyEDA shows no value on the board
                 val.hidden = True
-        for t in fp.texts:  # the library's Fab "${REFERENCE}" has no EasyEDA counterpart either
-            if t.kind == "user" and t.text == "${REFERENCE}" and t.layer.endswith(".Fab"):
-                t.hidden = True
+        # the library footprint's Fab "${REFERENCE}" has no EasyEDA counterpart: not on the board (hidden, KiCad
+        # would turn it into a "Field<n>" with a new id on every save)
+        fp.texts = [t for t in fp.texts
+                    if not (t.kind == "user" and t.text == "${REFERENCE}" and t.layer.endswith(".Fab"))]
         merged = dict(dattrs)
         merged.update({k: v for k, v in comp_attrs.items() if v})
         props = {}
         for k in ("Datasheet", "Description"):
-            v = str(dattrs.get(k) or "")
+            v = str(dattrs.get(k) or "").strip()
             props[k] = "" if v.startswith("=") else v
-        if not props["Description"]:
-            props["Description"] = dev.get("description", "") or ""
+        props["Description"] = str(dev.get("description") or props["Description"] or "").strip()  # as the symbol
         props.update(part_fields(merged))
         uid = self.uid("fp", c.id)
         path, sheetname, sheetfile = (link[:3] if link else (None, None, None))
@@ -497,16 +510,15 @@ class BoardConverter:
         return footprint_board_sexp(fp, lib_id, pos, kangle, back, uid, path, sheetname, sheetfile, props, attr,
                                     locked=bool(c.d.get("locked")), model_override=[model] if model else None)
 
-    def _fit_text(self, r: Rec, text: str, angle: float, back: bool):
-        """textfit for a STRING / ATTR record: Hershey stroke font, or a TrueType font (EasyEDA's rendering of it
-        from the project if there is one)."""
-        font = r.str("fontFamily", "default") or "default"
-        if font == "default":
-            return textfit.fit(text, r.num("x"), r.num("y"), angle, r.str("origin"), r.num("fontSize", 45),
-                               r.num("strokeWidth", 6), back)
-        boxes = self.doc.meta.get("ttf") or {}
-        box = boxes.get(r.id) or boxes.get(ttf_key(text, font, r.num("fontSize", 45)))
-        return textfit.fit_ttf(text, r.num("x"), r.num("y"), angle, r.str("origin"), r.num("fontSize", 45), back, box)
+    def _fit_text(self, r: Rec, text: str, angle: float, back: bool) -> textfit.Fit:
+        """Where KiCad has to put the text of a STRING / ATTR record (line font, or a TrueType font with EasyEDA's
+        rendering of it from the project if there is one)."""
+        return fit_string(r, text, angle, back, self.doc.meta.get("ttf"))
+
+    @staticmethod
+    def _text_back(r: Rec) -> bool:
+        """Text is mirrored on bottom-side layers; its mirror flag swaps that."""
+        return L.is_back(r.int("layerId")) != r.bool("mirror")
 
     def _place_field(self, t: Text, ar: Rec, pos, fp_angle: float, fp_back: bool):
         """Position a footprint field from an absolute EasyEDA ATTR record."""
@@ -522,20 +534,21 @@ class BoardConverter:
         shown = ar.str("value") or t.text
         if ar.d.get("keyVisible"):
             shown = f"{ar.str('key')}:{shown}"
-        x, y, w, h = self._fit_text(ar, shown, ar.num("angle"), layer.startswith("B."))
-        absp = self.P(x, y)
+        is_back_text = self._text_back(ar)
+        ft = self._fit_text(ar, shown, ar.num("angle"), is_back_text)
+        absp = self.P(ft.x, ft.y)
         rel = (absp[0] - pos[0], absp[1] - pos[1])
         local = krot(rel, -fp_angle)
         t.at = (rnd(local[0]), rnd(local[1]))
-        is_back_text = layer.startswith("B.")
         a = norm_deg(ar.num("angle"))
         # stored text angle is relative to footprint in our model (footprint_board_sexp adds fp angle)
         t.angle = norm_deg((-a if is_back_text else a) - fp_angle)
         t.layer = layer
         t.mirror = is_back_text
-        t.size = (rnd(w * MIL, 4), rnd(h * MIL, 4))
+        t.size = (rnd(ft.w * MIL, 4), rnd(ft.h * MIL, 4))
         t.thickness = rnd(max(0.05, mm(ar.num("strokeWidth", 6))), 4)
-        t.justify = ("", "")  # centre: textfit placed the anchor in the middle of EasyEDA's ink
+        t.justify = (ft.hjust, "")  # centre: textfit placed the anchor in the middle of EasyEDA's ink
+        t.line_spacing = ft.line_spacing
         t.hidden = not visible
 
     def _free_pad(self, r: Rec):
@@ -547,17 +560,37 @@ class BoardConverter:
         pos = self.P(*center)
         p.at = (0.0, 0.0)
         p.net = self.net(r.str("netName")) or None
-        fp = Footprint(f"Pad_{sane_name(num or r.id)}", attr=["smd" if p.kind == "smd" else "through_hole"])
-        fp.pads = [p]
-        fp.texts = [Text("reference", "", (0, -1.5), 0, "F.Fab", hidden=True),
-                    Text("value", "", (0, 1.5), 0, "F.Fab", hidden=True)]
-        uid = self.uid("freepad", r.id)
         angle = p.angle
         p.angle = 0.0
+        # named after what it is, so that equal pads share one footprint of the project library
+        size = f"{rnd(p.size[0], 3):g}x{rnd(p.size[1], 3):g}mm" if p.shape != "custom" else stable_uuid(repr(p.primitives))[:8]
+        drill = f"_D{rnd(p.drill[1], 3):g}" + (f"x{rnd(p.drill[2], 3):g}" if p.drill[0] and p.drill[1] != p.drill[2] else "") \
+            if p.drill else ""
+        side = "" if p.drill else "_B" if "B.Cu" in p.layers else ""
+        name = f"Pad_{'NPTH' if p.kind == 'np_thru_hole' else 'TH' if p.drill else 'SMD'}_{p.shape}_{size}{drill}{side}"
+        if num not in ("", "1"):
+            name += f"_{sane_name(num)}"
+        while name in self.lib_fps and repr(_pad_key(self.lib_fps[name].pads[0])) != repr(_pad_key(p)):
+            name += "_"
+        attr = (["smd"] if p.kind == "smd" else ["through_hole"] if p.kind == "thru_hole" else []) \
+            + ["board_only", "exclude_from_pos_files", "exclude_from_bom"]
+        fp = Footprint(name, descr="Pad placed on the board itself", attr=attr)
+        fp.pads = [p]
+        fp.texts = [Text("reference", "", (0, -1.5), 0, "F.Fab", hidden=True),
+                    Text("value", name, (0, 1.5), 0, "F.Fab", hidden=True)]
+        if name not in self.lib_fps:
+            lib = Footprint(name, descr=fp.descr, attr=list(attr))
+            lp = Pad(**{k: (list(v) if isinstance(v, list) else dict(v) if isinstance(v, dict) else v)
+                        for k, v in p.__dict__.items()})
+            lp.net = None
+            lib.pads = [lp]
+            lib.texts = [Text("reference", "REF**", (0, -1.5), 0, "F.Fab", hidden=True),
+                         Text("value", name, (0, 1.5), 0, "F.Fab", hidden=True)]
+            self.lib_fps[name] = lib
+        uid = self.uid("freepad", r.id)
         self.stats["free_pads"] = self.stats.get("free_pads", 0) + 1
         return footprint_board_sexp(fp, f"{self.lib_nick}:{fp.name}", pos, angle, False, uid, None, None, None,
-                                    {}, ["board_only", "exclude_from_pos_files", "exclude_from_bom"],
-                                    locked=r.bool("locked"))
+                                    {}, attr, locked=r.bool("locked"))
 
     # ------------------------------------------------------------------ primitives
     def _layer(self, lid):
@@ -694,17 +727,54 @@ class BoardConverter:
                     n.insert(-1, [Sym("net"), self.net(net)])
                 gr.append(self._lock(n, r))
 
-    def _fill(self, r: Rec, gr):
+    def _hole(self, r: Rec, s: geom.Shape, k: int):
+        """A round or slot-shaped FILL on the multi-layer is drilled, not routed (EasyEDA lists it in its NPTH
+        drill file and leaves it out of the outline Gerber): a mounting hole footprint, as KiCad boards have them."""
+        if s.kind == "circle":
+            c = s.center
+        elif s.kind == "rect":
+            c = s.rect_center()
+        else:
+            return None
+        p = _npth_from_fill(s, c)
+        if p is None:
+            return None
+        angle, p.angle = p.angle, 0.0
+        w, h = p.size
+        name = f"Hole_{rnd(w, 3):g}mm" if p.shape == "circle" else f"Slot_{rnd(w, 3):g}x{rnd(h, 3):g}mm"
+        fp = Footprint(name, descr=f"Non-plated {'hole' if p.shape == 'circle' else 'slot'} {name[5:]}", attr=[])
+        fp.pads = [p]
+        fp.texts = [Text("reference", "", (0, rnd(-max(w, h) / 2 - 1, 3)), 0, "F.Fab", hidden=True),
+                    Text("value", name, (0, rnd(max(w, h) / 2 + 1, 3)), 0, "F.Fab", hidden=True)]
+        self.stats["holes"] = self.stats.get("holes", 0) + 1
+        if name not in self.lib_fps:
+            lib = Footprint(name, descr=fp.descr, attr=["board_only", "exclude_from_pos_files", "exclude_from_bom"])
+            lib.pads = [Pad(**{**p.__dict__, "layers": list(p.layers)})]
+            lib.texts = [Text(t.kind, "REF**" if t.kind == "reference" else t.text, t.at, 0, t.layer, hidden=True)
+                         for t in fp.texts]
+            self.lib_fps[name] = lib
+        return footprint_board_sexp(fp, f"{self.lib_nick}:{name}", self.P(*c), angle, False,
+                                    self.uid("hole", r.id, k), None, None, None, {},
+                                    ["board_only", "exclude_from_pos_files", "exclude_from_bom"],
+                                    locked=r.bool("locked"))
+
+    def _fill(self, r: Rec, gr, fps=None):
         lid = r.int("layerId")
         shapes = geom.parse_contours(r.d.get("path"))
         if lid in (L.OUTLINE, L.MULTI, L.HOLE):
             for k, s in enumerate(shapes):
+                hole = self._hole(r, s, k) if lid != L.OUTLINE and fps is not None else None
+                if hole is not None:
+                    fps.append(hole)
+                    continue
                 for i, g in enumerate(self._shape_to_board(s, "Edge.Cuts", 0.05)):
                     gr.append(self._lock(graphic_sexp(g, self.uid("cut", r.id, k, i), prefix="gr_"), r))
             return
         layer = self._layer(lid)
         if layer is None:
             return
+        if L.is_copper(layer) and str(r.d.get("fillStyle")).upper() in ("2", "PLANE"):
+            return self._plane(r, layer)
         net = r.str("netName")
         if len(shapes) == 1 and shapes[0].kind == "circle":
             g = self._shape_to_board(shapes[0], layer, 0, fill=True)[0]
@@ -724,9 +794,10 @@ class BoardConverter:
                 n.insert(-1, [Sym("net"), self.net(net)])
             gr.append(self._lock(n, r))
 
-    def _zone_polys(self, path, scale: float = 1.0) -> list[list]:
+    def _zone_polys(self, path, scale: float = 1.0, err: float = 0.5) -> list[list]:
+        """Polygons (KiCad mm) of a contour list; `err`: how far a flattened arc may leave the real one (mil)."""
         shapes = geom.parse_contours(path)
-        polys = [[(x * scale, y * scale) for x, y in s.polygon(0.5 / scale)] for s in shapes]
+        polys = [[(x * scale, y * scale) for x, y in s.polygon(err / scale)] for s in shapes]
         out = []
         for outer, holes in geom.nest_contours([p for p in polys if len(p) >= 3]):
             pts = geom.fracture(outer, holes) if holes else outer
@@ -750,11 +821,13 @@ class BoardConverter:
         safe = R.lookup("SAFE", safe_name)
         clr = None
         if safe is not None:
-            # a copper pour is a "fill region" in EasyEDA's spacing table: its real copper keeps that distance
-            # (the stored fill sits half the pour width further away and is stroked with it, see _easyeda_fill)
-            vals = [safe.value("fill", k) for k in ("track", "smd", "th", "via")]
-            vals = [v for v in vals if v]
-            clr = max(vals) if vals else None
+            # the "copper pour" row of EasyEDA's spacing table (row 7; row 6 is for solid fill regions): its real
+            # copper keeps that distance (the stored fill sits half the pour width further away and is stroked
+            # with it, see _easyeda_fill; checked against the copper of EasyEDA's own Gerber).  The zone gets the
+            # smallest value, _design_rules adds rules for the object types that need more
+            vals = [v for k in ("track", "smd", "th", "via") if (v := safe.value("zone", k))]
+            clr = min(vals) if vals else None
+            self._pour_safe = safe
         if clr is None:
             clr = 10.0
         return cop, clr
@@ -775,7 +848,8 @@ class BoardConverter:
             if not isinstance(e, dict) or not e.get("path"):
                 continue
             if e.get("fill") in (True, 1, "1", "true"):
-                out += self._zone_polys(e["path"], 10.0)  # fills are stored in units of 10 mil
+                # fills are stored in units of 10 mil; arcs to 1 um, their chords cut into the clearance
+                out += self._zone_polys(e["path"], 10.0, 0.04)
             elif float(e.get("strokeWidth") or 0) > 0:  # thermal spokes: stroked lines with round ends
                 w = float(e["strokeWidth"]) * 10
                 for sh in geom.parse_contours(e["path"]):
@@ -784,26 +858,8 @@ class BoardConverter:
                         spokes.append([self.P(*q) for q in _stadium(a, b, w / 2)])
         return out, spokes
 
-    def _pour(self, r: Rec):
-        lid = r.int("layerId")
-        layer = self._layer(lid)
-        if layer is None or not L.is_copper(layer):
-            return None
-        polys = self._zone_polys(r.d.get("path"))
-        if not polys:
-            return None
-        cop, clr = self._pour_settings(r.id)
-        orders = [p.int("order") for p in self.doc.of("POUR")]
-        prio = max(orders + [0]) - r.int("order")
-        n = [Sym("zone"), [Sym("net"), self.net(r.str("netName"))], [Sym("layer"), layer],
-             [Sym("uuid"), self.uid("zone", r.id)]]
-        if r.str("name"):
-            n.append([Sym("name"), r.str("name")])
-        if r.d.get("locked"):
-            n.append([Sym("locked"), YES])
-        n.append([Sym("hatch"), Sym("edge"), 0.5])
-        if prio > 0:
-            n.append([Sym("priority"), prio])
+    def _connect_pads(self, cop, clr: float):
+        """How a zone joins its pads, from EasyEDA's copper-region rule: (connect_pads node, spoke gap, width)."""
         connect = [Sym("connect_pads")]
         gap, spoke = 0.5, 0.5
         if cop is not None:
@@ -817,23 +873,90 @@ class BoardConverter:
             ref = cop.th if smd == "direct" else cop.smd
             gap, spoke = mm(ref.spoke_gap), mm(ref.spoke_width)
         connect.append([Sym("clearance"), rnd(mm(clr), 4)])
+        return connect, gap, spoke
+
+    def _plane(self, r: Rec, layer: str):
+        """A region of an inner plane layer.  EasyEDA's plane layers are copper all over, divided into regions
+        that each carry a net (or none yet); the copper itself is only worked out for the Gerber.  In KiCad that
+        is a zone, and KiCad fills it."""
+        polys = self._zone_polys(r.d.get("path"))
+        if not polys:
+            return None
+        cop, clr = self._pour_settings("")
+        if not hasattr(self, "_planes"):  # a region inside another one is filled first: the smaller, the higher
+            def area(f):
+                return sum(abs(geom.signed_area(pl)) for pl in self._zone_polys(f.d.get("path")))
+            planes = [f for f in self.doc.of("FILL") if str(f.d.get("fillStyle")).upper() in ("2", "PLANE")]
+            self._planes = [f.id for f in sorted(planes, key=area, reverse=True)]
+        prio = len(self.doc.of("POUR")) + self._planes.index(r.id)
+        self.stats["plane regions"] = self.stats.get("plane regions", 0) + 1
+        uid = self.uid("zone", r.id)
+        n = [Sym("zone"), [Sym("net"), self.net(r.str("netName"))], [Sym("layer"), layer], [Sym("uuid"), uid]]
+        if r.d.get("locked"):
+            n.append([Sym("locked"), YES])
+        n += [[Sym("hatch"), Sym("edge"), 0.5], [Sym("priority"), prio]]
+        connect, gap, spoke = self._connect_pads(cop, clr)
+        n += [connect, [Sym("min_thickness"), 0.127],
+              [Sym("fill"), [Sym("thermal_gap"), rnd(gap, 4)], [Sym("thermal_bridge_width"), rnd(spoke, 4)],
+               [Sym("island_removal_mode"), 1]]]  # a plane keeps all its copper
+        for poly in polys:
+            n.append([Sym("polygon"), [Sym("pts")] + [[Sym("xy"), x, y] for x, y in poly]])
+        if not hasattr(self, "unfilled"):
+            self.unfilled = []
+        self.unfilled.append(uid)
+        return n
+
+    def _pour(self, r: Rec):
+        lid = r.int("layerId")
+        layer = self._layer(lid)
+        if layer is None or not L.is_copper(layer):
+            return None
+        polys = self._zone_polys(r.d.get("path"))
+        if not polys:
+            return None
+        if not r.str("netName") and r.d.get("keepIsland") not in (1, True):
+            return self._pour_cutout(r, layer, polys)
+        cop, clr = self._pour_settings(r.id)
+        # EasyEDA fills the pour with the lowest order first; KiCad the highest priority, and wants zones that
+        # overlap to differ in it: so every pour gets its own, later ones of the same order below earlier ones
+        ranked = sorted(self.doc.of("POUR"), key=lambda p: p.int("order"), reverse=True)
+        prio = next(k for k, p in enumerate(ranked) if p.id == r.id)
+        self.stats["pours"] = self.stats.get("pours", 0) + 1
+        n = [Sym("zone"), [Sym("net"), self.net(r.str("netName"))], [Sym("layer"), layer],
+             [Sym("uuid"), self.uid("zone", r.id)]]
+        if r.str("name"):
+            n.append([Sym("name"), r.str("name")])
+        if r.d.get("locked"):
+            n.append([Sym("locked"), YES])
+        n.append([Sym("hatch"), Sym("edge"), 0.5])
+        if prio > 0:
+            n.append([Sym("priority"), prio])
+        connect, gap, spoke = self._connect_pads(cop, clr)
         n.append(connect)
-        # EasyEDA's pour "width" is its minimum fill width (mm; 0.2 by default): with it KiCad leaves the same thin
-        # gaps unfilled (checked against EasyEDA's Gerber). KiCad drops thermal spokes thinner than that minimum.
-        pw = r.num("width")
-        min_w = pw if 0 < pw < 2 else 0.15
-        if cop is not None:
-            for t in (cop.smd, cop.th):
-                if t.connect == "thermal" and t.spoke_width > 0:
-                    min_w = min(min_w, mm(t.spoke_width) * 0.95)
-        n.append([Sym("min_thickness"), rnd(max(min_w, 0.0508), 4)])
         pt = r.d.get("pourType") or {}
-        if isinstance(pt, list):  # documented form: ["SOLID", min neck] / ["LINE", mode, angle, width, spacing]
+        if isinstance(pt, list):  # documented form: ["SOLID", fineness] / ["LINE", mode, angle, width, spacing]
             pt = {"pourType": pt[0] if pt else "SOLID", "params": pt[1:]}
         elif isinstance(pt, dict) and str(pt.get("pourType")).upper() == "GRID_LINE":  # what 3.x writes
             pt = {"pourType": "LINE", "params": [0, pt.get("angle") or 0, pt.get("strokeWidth") or 10,
                                                   pt.get("strokeSpacing") or 20]}
         ptype = str(pt.get("pourType") if isinstance(pt, dict) else pt or "SOLID").upper()
+        # A solid pour's "fineness" (mil, 8 unless set) is the narrowest copper EasyEDA leaves: it shrinks the fill
+        # by half of it and draws the outline with a round pen that wide (its code: optimizationValue, and what its
+        # Gerber shows).  As KiCad's minimum width it leaves the same thin gaps unfilled.  KiCad drops thermal
+        # spokes thinner than that minimum.
+        fine = 0.0
+        if isinstance(pt, dict) and ptype == "SOLID":
+            try:
+                fine = float(pt.get("fineness") or next(iter(pt.get("params") or []), 0) or 0)
+            except (TypeError, ValueError):
+                fine = 0.0
+        fine = mm(fine if 0 < fine < 80 else 8.0)
+        min_w = fine
+        if cop is not None:
+            for t in (cop.smd, cop.th):
+                if t.connect == "thermal" and t.spoke_width > 0:
+                    min_w = min(min_w, mm(t.spoke_width) * 0.95)
+        n.append([Sym("min_thickness"), rnd(max(min_w, 0.0508), 4)])
         filled, spokes = self._easyeda_fill(r.id)
         fill = [Sym("fill"), Sym("yes")] if filled else [Sym("fill")]
         if ptype in ("HATCH", "GRID", "MESH", "HATCHED"):
@@ -860,11 +983,39 @@ class BoardConverter:
             n.append([Sym("filled_polygon"), [Sym("layer"), layer], [Sym("pts")] + [[Sym("xy"), x, y] for x, y in poly]])
         if filled:
             self.stats["pours_filled_as_easyeda"] = self.stats.get("pours_filled_as_easyeda", 0) + 1
-            stroke = round(pw / 0.0254) * 0.0254 if 0 < pw < 2 else 0.2032  # EasyEDA strokes 0.2 mm as 8 mil
+            # EasyEDA draws the fill outline with a pen of the fineness.  A few um less than half of it: the
+            # flattened arcs would otherwise put the copper a hair inside the clearance it was computed with, and
+            # KiCad's DRC would report every pad
             if not hasattr(self, "fill_fixes"):
                 self.fill_fixes = {}
-            self.fill_fixes[self.uid("zone", r.id)] = {"layer": layer, "grow": stroke / 2, "spokes": spokes}
+            self.fill_fixes[self.uid("zone", r.id)] = {"layer": layer, "grow": max(fine / 2 - 0.0046, 0.0),
+                                                       "spokes": spokes}
+        elif str(r.id) not in self._poured:
+            # never built in EasyEDA (a pour it built and found empty stays empty): KiCad fills it
+            if not hasattr(self, "unfilled"):
+                self.unfilled = []
+            self.unfilled.append(self.uid("zone", r.id))
         return n
+
+    def _pour_cutout(self, r: Rec, layer: str, polys: list):
+        """A pour without a net that doesn't keep islands never has copper; EasyEDA designs use it to clear an
+        area of the pours below it (around a mounting hole, say).  KiCad's way to say that is a rule area that
+        keeps copper pours out."""
+        box = geom.bbox(polys[0])
+        under = False
+        for o in self.doc.of("POUR"):
+            if o.id == r.id or o.int("layerId") != r.int("layerId") or not o.str("netName"):
+                continue
+            ob = geom.bbox([q for pl in self._zone_polys(o.d.get("path")) for q in pl] or [(0, 0)])
+            if ob[0] < box[2] and box[0] < ob[2] and ob[1] < box[3] and box[1] < ob[3]:
+                if o.int("order") <= r.int("order"):
+                    return None  # an overlapping pour has priority over it: it clears nothing
+                under = True
+        if not under:
+            return None
+        z = Zone([layer], polys[0], name=r.str("name"), no_pour=True)
+        self.stats["pour_cutouts"] = self.stats.get("pour_cutouts", 0) + 1
+        return self._lock(zone_sexp(z, self.uid("zone", r.id), False), r)
 
     def _region(self, r: Rec):
         lid = r.int("layerId")
@@ -902,7 +1053,7 @@ class BoardConverter:
         layer = self._layer(r.int("layerId"))
         if layer is None or not L.is_copper(layer):
             return None
-        polys = self._zone_polys(r.d.get("path"))
+        polys = self._zone_polys(r.d.get("path"), err=0.04)  # curved sides to 1 um: pours were cut around them
         if not polys:
             return None
         self.stats["teardrops"] = self.stats.get("teardrops", 0) + 1
@@ -911,10 +1062,12 @@ class BoardConverter:
              [Sym("attr"), [Sym("teardrop"), [Sym("type"), Sym("padvia")]]],
              [Sym("connect_pads"), Sym("yes"), [Sym("clearance"), 0]], [Sym("min_thickness"), 0.0254],
              [Sym("filled_areas_thickness"), NO],
-             [Sym("fill"), [Sym("thermal_gap"), 0.5], [Sym("thermal_bridge_width"), 0.5],
+             [Sym("fill"), Sym("yes"), [Sym("thermal_gap"), 0.5], [Sym("thermal_bridge_width"), 0.5],
               [Sym("island_removal_mode"), 1]]]
         for poly in polys:
             n.append([Sym("polygon"), [Sym("pts")] + [[Sym("xy"), x, y] for x, y in poly]])
+        for poly in polys:  # a teardrop is copper all over: its fill is its outline
+            n.append([Sym("filled_polygon"), [Sym("layer"), layer], [Sym("pts")] + [[Sym("xy"), x, y] for x, y in poly]])
         return n
 
     def _string(self, r: Rec, gr):
@@ -925,29 +1078,28 @@ class BoardConverter:
             return
         if layer == "Edge.Cuts":
             layer = "Cmts.User"
-        back = layer.startswith("B.")
+        back = self._text_back(r)
         a = norm_deg(r.num("angle"))
-        x, y, w, h = self._fit_text(r, text, a, back)
-        j = ("", "")  # centre: textfit placed the anchor in the middle of EasyEDA's ink
-        eff = [Sym("effects"), [Sym("font"), [Sym("size"), rnd(h * MIL, 4), rnd(w * MIL, 4)],
-                                [Sym("thickness"), rnd(max(0.05, mm(r.num("strokeWidth", 6))), 4)]]]
-        if r.d.get("bold") in (1, True):
-            eff[1].append([Sym("bold"), YES])
-        if r.d.get("italic") in (1, True):
-            eff[1].append([Sym("italic"), YES])
-        just = [Sym("justify")] + [Sym(x) for x in j if x]
+        ft = self._fit_text(r, text, a, back)  # centred: textfit put the anchor in the middle of EasyEDA's ink
+        font = [Sym("font"), [Sym("size"), rnd(ft.h * MIL, 4), rnd(ft.w * MIL, 4)]]
+        if abs(ft.line_spacing - 1.0) > 1e-4:
+            font.append([Sym("line_spacing"), rnd(ft.line_spacing, 4)])
+        font.append([Sym("thickness"), rnd(max(0.05, mm(r.num("strokeWidth", 6))), 4)])
+        eff = [Sym("effects"), font]
+        just = [Sym("justify")] + ([Sym(ft.hjust)] if ft.hjust else [])
         if back:
             just.append(Sym("mirror"))
         if len(just) > 1:
             eff.append(just)
-        at = [Sym("at"), *self.P(x, y)]
+        at = [Sym("at"), *self.P(ft.x, ft.y)]
         ang = norm_deg(-a if back else a)
         if ang:
             at.append(ang)
         lay = [Sym("layer"), layer]
-        if r.d.get("reverse") in (1, True):
+        # EasyEDA inverts only text in outline fonts; its own line fonts are always drawn plain
+        if r.bool("reverse") and (r.str("fontFamily", "default") or "default") not in textfit.LINE_FONTS:
             lay.append(Sym("knockout"))
-        gr.append(self._lock([Sym("gr_text"), text, at, lay, [Sym("uuid"), self.uid("txt", r.id)], eff], r))
+        gr.append(self._lock([Sym("gr_text"), ft.text, at, lay, [Sym("uuid"), self.uid("txt", r.id)], eff], r))
 
     def _image(self, r: Rec, gr):
         lid = r.int("layerId")
@@ -968,15 +1120,13 @@ class BoardConverter:
             sy = 1.0
         start = (r.num("startX"), r.num("startY"))
         ang = r.num("angle") % 360
-        mirror = bool(r.d.get("mirror")) ^ layer.startswith("B.")
+        mirror = r.bool("mirror") != L.is_back(lid)  # bottom-side layers are mirrored, the flag swaps that
 
         def tf(p):
-            # top-left (x0, y1) of the image goes to `start`
-            q = ((p[0] - x0) * sx, (p[1] - y1) * sy)
-            if mirror:
-                q = ((x1 - x0) * sx - q[0], q[1])
-            q = geom.rot(q, ang)
-            return (start[0] + q[0], start[1] + q[1])
+            # EasyEDA: the outline's top-left corner (x0, y1) at the origin, scaled to width x height, turned
+            # about it, mirrored left-right there, moved to `start`
+            q = geom.rot(((p[0] - x0) * sx, (p[1] - y1) * sy), ang)
+            return (start[0] - q[0] if mirror else start[0] + q[0], start[1] + q[1])
 
         n_out = 0
         for k, (outer, holes) in enumerate(geom.nest_contours(polys)):
@@ -1031,7 +1181,8 @@ class BoardConverter:
             a = next((a for a in self.doc.of("ATTR") if a.d.get("parentId") == r.id), None)
             txt = dict(a.d, text=a.str("value")) if a is not None else None
         value = str((txt or {}).get("text") or "")
-        size = mm(float((txt or {}).get("fontSize") or 60)) * textfit.CAP
+        f_mil, t_mil = float((txt or {}).get("fontSize") or 60), float((txt or {}).get("strokeWidth") or 6)
+        size = mm(max(f_mil - t_mil, f_mil * 0.5)) * 21 / 32  # cap height of EasyEDA's default font
         # EasyEDA files carry absurd stroke widths here (17000 mil seen): keep lines and text sensible
         w = mm(r.num("lineWidth") or r.num("strokeWidth") or 6)
         w = w if 0 < w <= 1.0 else 0.15
@@ -1167,7 +1318,7 @@ class BoardConverter:
                 or next(iter(R.diff_full.values()), None)
             if d:
                 wmin, wdef, wmax, gap, tol = d
-                c = [f"(constraint track_width (min {rnd(mm(wmin), 4)}mm) (opt {rnd(mm(wdef), 4)}mm)"
+                c = [f"(constraint track_width (min {self._min(wmin)}mm) (opt {rnd(mm(wdef), 4)}mm)"
                      f" (max {rnd(mm(wmax), 4)}mm))"]
                 if tol:
                     c.append(f"(constraint skew (max {rnd(mm(tol), 4)}mm))")
@@ -1177,7 +1328,7 @@ class BoardConverter:
                     p_, n_ = q(pn["P"]), q(pn["N"])
                     # EasyEDA's pair spacing is between the pair's traces only
                     trk = "(A.Type == 'Track' || A.Type == 'Arc') && (B.Type == 'Track' || B.Type == 'Arc')"
-                    out.extend([f"(rule \"diff pair {name} gap\"\n\t(constraint clearance (min {rnd(mm(gap), 4)}mm))\n"
+                    out.extend([f"(rule \"diff pair {name} gap\"\n\t(constraint clearance (min {self._min(gap)}mm))\n"
                                 f"\t(condition \"{trk} && ((A.NetName == '{p_}' && B.NetName == '{n_}') || "
                                 f"(A.NetName == '{n_}' && B.NetName == '{p_}'))\"))", ""])
             length_rule(f"diff pair {name}", set(pn.values()), sel.get("NET_LENGTH"))
@@ -1205,17 +1356,35 @@ class BoardConverter:
         return out
 
     # ------------------------------------------------------------------ rules
+    def _min(self, v_mil: float) -> float:
+        """A minimum the DRC checks (mm), less the import tolerance."""
+        return rnd(max(mm(v_mil) - self.tolerance, 0.0), 4)
+
+    def design_rules(self, tolerance: float = 0.0):
+        """The rules again, checked `tolerance` mm more leniently: (net classes, board constraints, custom rules)."""
+        self.tolerance = tolerance
+        classes, cfg, dru = self._design_rules()[:3]
+        return classes, cfg, dru
+
     def _design_rules(self):
         R = self.rules
         safe = R.default("SAFE")
-        track = R.default("TRACK") or (5, 10, 100)
-        via = R.default("RADIUS") or (12, 24, 200, 6, 12, 120)
+        # without a rule: what the board itself uses (smallest, most common, largest)
+        from collections import Counter
+
+        def seen(vals, fallback):
+            vals = [v for v in vals if v > 0]
+            return (min(vals), Counter(vals).most_common(1)[0][0], max(vals)) if vals else fallback
+        track = R.default("TRACK") or seen([r.num("width") for r in self.doc.of("LINE", "ARC")
+                                            if L.is_copper(self._layer(r.int("layerId")) or "")], (5, 10, 100))
+        via = R.default("RADIUS") or (seen([r.num("viaDiameter") for r in self.doc.of("VIA")], (12, 24, 200))
+                                      + seen([r.num("holeDiameter") for r in self.doc.of("VIA")], (6, 12, 120)))
         diff = R.default("DIFFER_ENTAIL")
         base_clr = (safe.value("track", "track") if safe else None) or 6.0
 
         def mk(name, safe_r, track_r, via_r, diff_r=None):
             clr = (safe_r.value("track", "track") if safe_r else None) or base_clr
-            nc = NetClass(name, rnd(mm(clr), 4), rnd(mm(track_r[1]), 4), rnd(mm(via_r[1]), 4), rnd(mm(via_r[4]), 4))
+            nc = NetClass(name, self._min(clr), rnd(mm(track_r[1]), 4), rnd(mm(via_r[1]), 4), rnd(mm(via_r[4]), 4))
             if diff_r:
                 nc.diff_pair_width, nc.diff_pair_gap = rnd(mm(diff_r[0]), 4), rnd(mm(diff_r[1]), 4)
             return nc
@@ -1260,17 +1429,29 @@ class BoardConverter:
         edge = (safe.value("outline", "track") if safe else None) or 10.0
         hole_vals = [v for k in ("track", "smd", "th", "via") if safe and (v := safe.value("hole", k))]
         hole_min = min(hole_vals) if hole_vals else None
-        hole_clr = hole_min
+        # EasyEDA's "hole" row is for holes drawn on the board (the Hole_* / Slot_* footprints here).  The hole of
+        # a pad or via, plated or not, is kept clear like the pad itself: tracks pass a connector's peg hole at
+        # the pad distance.  KiCad checks every hole against its board minimum, so that is the smaller of them
+        pad_vals = [v for a in ("th", "via") for b in ("track", "smd", "th", "via") if safe and (v := safe.value(a, b))]
+        hole_clr = min(([hole_min] if hole_min else []) + pad_vals) if (hole_min or pad_vals) else None
         rules_cfg = {
-            "min_clearance": rnd(mm(min_clr), 4),
-            "min_track_width": rnd(mm(min_track), 4),
-            "min_via_diameter": rnd(mm(min(v[0] for v in (list(R.via.values()) or [via]))), 4),
-            "min_through_hole_diameter": rnd(mm(min(v[3] for v in (list(R.via.values()) or [via]))), 4),
-            "min_via_annular_width": rnd(max(0.05, mm(min((v[0] - v[3]) / 2 for v in (list(R.via.values()) or [via])))), 4),
-            "min_copper_edge_clearance": rnd(mm(edge), 4),
-            "min_hole_clearance": rnd(mm(hole_clr), 4) if hole_clr else 0.25,
-            "min_hole_to_hole": rnd(mm(R.hole_to_hole), 4) if R.hole_to_hole else 0.25,
+            "min_clearance": self._min(min_clr),
+            "min_track_width": self._min(min_track),
+            "min_via_diameter": self._min(min(v[0] for v in (list(R.via.values()) or [via]))),
+            "min_through_hole_diameter": self._min(min(v[3] for v in (list(R.via.values()) or [via]))),
+            "min_via_annular_width": max(0.05, self._min(min((v[0] - v[3]) / 2 for v in (list(R.via.values()) or [via])))),
+            "min_copper_edge_clearance": self._min(edge),
+            "min_hole_clearance": self._min(hole_clr) if hole_clr else 0.25,
+            "min_hole_to_hole": self._min(R.hole_to_hole) if R.hole_to_hole else 0.25,
+            # EasyEDA doesn't count thermal spokes; one is a connection
+            "min_resolved_spokes": 1,
         }
+        # EasyEDA checks the distance between components only when its rule asks for one (the courtyards then
+        # reach half of it around pads and body).  Without that rule it doesn't look at it at all, and KiCad
+        # doesn't either: a board EasyEDA calls clean has parts side by side, under modules and around holes
+        self.severities = {} if R.device_clearance else {"courtyards_overlap": "ignore",
+                                                         "npth_inside_courtyard": "ignore",
+                                                         "pth_inside_courtyard": "ignore"}
         # EasyEDA's safe-spacing table is per pair of object types (e.g. via to SMD pad 0.1 mm next to BGA
         # pads while via to track is 0.152 mm): one rule per pair that differs from the net class clearance.
         # KiCad applies the rules in file order and the last match wins; conditions are written both ways round.
@@ -1289,35 +1470,54 @@ class BoardConverter:
                     cond = f"{ca.format('A')} && {cb.format('B')}"
                     if a != b:
                         cond = f"({cond}) || ({cb.format('A')} && {ca.format('B')})"
-                    dru.append(f"(rule \"{label[a]} to {label[b]}\"\n\t(constraint clearance (min {rnd(mm(v), 4)}mm))\n"
+                    dru.append(f"(rule \"{label[a]} to {label[b]}\"\n\t(constraint clearance (min {self._min(v)}mm))\n"
                                f"\t(condition \"{cond}\"))")
                     dru.append("")
-            # pours keep their own distance to the board outline (smaller than tracks' in JLC's templates)
-            pe = [v for v in (safe.value("fill", "outline"), safe.value("zone", "outline")) if v]
-            if pe and min(pe) < edge - 0.01:
-                dru.append(f"(rule \"pour to board edge\"\n\t(constraint edge_clearance (min {rnd(mm(min(pe)), 4)}mm))\n"
+            # pours: the zones carry the smallest distance of their row of the table; object types that need
+            # more get a rule, and so do the board outline and holes
+            ps = getattr(self, "_pour_safe", None) or safe
+            zv = {k: ps.value("zone", k) for k in order}
+            zmin = min([v for v in zv.values() if v] or [0])
+            for k in order:
+                if zv[k] and zv[k] > zmin + 0.01:
+                    c = kinds[k]
+                    dru.append(f"(rule \"pour to {label[k]}\"\n\t(constraint clearance (min {self._min(zv[k])}mm))\n"
+                               f"\t(condition \"(A.Type == 'Zone' && {c.format('B')}) || "
+                               f"({c.format('A')} && B.Type == 'Zone')\"))")
+                    dru.append("")
+            pe = ps.value("zone", "outline")
+            if pe and abs(pe - edge) > 0.01:
+                dru.append(f"(rule \"pour to board edge\"\n\t(constraint edge_clearance (min {self._min(pe)}mm))\n"
                            f"\t(condition \"A.Type == 'Zone' || B.Type == 'Zone'\"))")
                 dru.append("")
             # hole to copper: the board minimum is the smallest; larger ones per copper type, ascending so that
             # for a pair with holes on both sides the stricter value wins
+            # holes drawn on the board: larger ones per copper type, ascending so that the stricter value wins
+            drawn = "({0}.memberOfFootprint('*:Hole_*') || {0}.memberOfFootprint('*:Slot_*'))"
             holes = sorted((v, k) for k in kinds if (v := safe.value("hole", k)))
             for v, k in holes:
-                if hole_min is not None and v > hole_min + 0.01:
+                if hole_clr is not None and v > hole_clr + 0.01 and self.stats.get("holes"):
                     c = kinds[k]
-                    dru.append(f"(rule \"hole to {label[k]}\"\n\t(constraint hole_clearance (min {rnd(mm(v), 4)}mm))\n"
-                               f"\t(condition \"{c.format('A')} || {c.format('B')}\"))")
+                    dru.append(f"(rule \"hole to {label[k]}\"\n\t(constraint hole_clearance (min {self._min(v)}mm))\n"
+                               f"\t(condition \"({drawn.format('A')} && {c.format('B')}) || "
+                               f"({c.format('A')} && {drawn.format('B')})\"))")
                     dru.append("")
+            hz = ps.value("hole", "zone")
+            if hz and hole_clr is not None and hz > hole_clr + 0.01:
+                dru.append(f"(rule \"hole to pour\"\n\t(constraint hole_clearance (min {self._min(hz)}mm))\n"
+                           f"\t(condition \"A.Type == 'Zone' || B.Type == 'Zone'\"))")
+                dru.append("")
         names = getattr(self, "_regions_named", {})
         for rid, rr in R.region_rules.items():
             if rid in names and rr.get("SAFE") in R.safe:
                 v = R.safe[rr["SAFE"]].value("track", "track")
                 if v:
-                    dru.append(f"(rule \"{names[rid]} clearance\"\n\t(constraint clearance (min {rnd(mm(v), 4)}mm))\n"
+                    dru.append(f"(rule \"{names[rid]} clearance\"\n\t(constraint clearance (min {self._min(v)}mm))\n"
                                f"\t(condition \"A.insideArea('{names[rid]}')\"))")
                     dru.append("")
             if rid in names and rr.get("TRACK") in R.track:
                 t = R.track[rr["TRACK"]]
-                dru.append(f"(rule \"{names[rid]} track width\"\n\t(constraint track_width (min {rnd(mm(t[0]), 4)}mm)"
+                dru.append(f"(rule \"{names[rid]} track width\"\n\t(constraint track_width (min {self._min(t[0])}mm)"
                            f" (opt {rnd(mm(t[1]), 4)}mm) (max {rnd(mm(t[2]), 4)}mm))\n"
                            f"\t(condition \"A.insideArea('{names[rid]}')\"))")
                 dru.append("")
@@ -1329,15 +1529,13 @@ class BoardConverter:
         return list(classes.values()), rules_cfg, dru_text, widths[:20], vias[:10]
 
 
-def _stadium(a, b, r, n=8):
-    """Outline of a stroke from a to b with round ends of radius r."""
-    ang = math.atan2(b[1] - a[1], b[0] - a[0]) if a != b else 0.0
-    out = []
-    for c, start in ((b, ang - math.pi / 2), (a, ang + math.pi / 2)):
-        for k in range(n + 1):
-            t = start + math.pi * k / n
-            out.append((c[0] + r * math.cos(t), c[1] + r * math.sin(t)))
-    return out
+_stadium = geom.stadium
+
+
+def _pad_key(p: Pad):
+    """What makes two pads the same library pad (not where they are, their number or their net)."""
+    return (p.kind, p.shape, p.size, p.layers, p.drill, p.drill_offset, p.rratio, p.primitives, p.mask_margin,
+            p.paste_margin, sorted(p.stack.items()))
 
 
 def _copy_fp(fp: Footprint) -> Footprint:

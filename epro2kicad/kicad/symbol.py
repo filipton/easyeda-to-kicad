@@ -20,8 +20,18 @@ def r4(v: float) -> float:
     return 0.0 if v == 0 else v
 
 
+def on_grid(v: float) -> float:
+    """A schematic coordinate (mm), put on the 1 mil grid when it is a rounding error away from it.
+
+    Designs drawn in EasyEDA sit on that grid anyway.  Imported ones (from KiCad, Eagle ...) carry the dust of
+    their unit conversion, a pin at 58.42 and the end of its wire at 58.4199: touching for EasyEDA, apart for
+    KiCad, which wants the same coordinate to the last digit."""
+    g = round(v / 0.0254) * 0.0254
+    return r4(g if abs(v - g) < 0.002 else v)
+
+
 def kp(x, y):
-    return (r4(x * U), r4(y * U))
+    return (on_grid(x * U), on_grid(y * U))
 
 
 def font(size=1.27, bold=False, italic=False):
@@ -390,20 +400,136 @@ def pin_sexp(p: SymPin) -> list:
 # ---------------------------------------------------------------------------
 
 _stock_cache: dict[str, dict] = {}
+_stock_index: dict | None = None
+_TOP_SYMBOL = re.compile(rb'^\t\(symbol "((?:[^"\\]|\\.)*)"', re.M)
+
+
+def _symbol_spans(path: str) -> dict:
+    """Symbol name -> (byte offset, length) of its definition in a KiCad symbol library (as KiCad writes them: one
+    symbol after the other, each starting a line with one tab)."""
+    with open(path, "rb") as f:
+        data = f.read()
+    hits = list(_TOP_SYMBOL.finditer(data))
+    end = data.rfind(b"\n)")
+    out = {}
+    for m, nxt in zip(hits, hits[1:] + [None]):
+        stop = nxt.start() if nxt else (end if end > m.start() else len(data))
+        name = re.sub(r"\\(.)", r"\1", m.group(1).decode("utf-8", "replace"))
+        out[name] = (m.start(), stop - m.start())
+    return out
+
+
+def stock_index() -> dict:
+    """Library -> {symbol name: (byte offset, length)} of every installed KiCad symbol library.
+
+    Reading all of them (a few hundred MB) takes seconds, so the index is kept on disk until a library changes."""
+    global _stock_index
+    if _stock_index is not None:
+        return _stock_index
+    d = next((x for x in STOCK_DIRS if x and os.path.isdir(x)), None)
+    if not d:
+        _stock_index = {}
+        return _stock_index
+    import hashlib
+    import json
+    files = sorted(f for f in os.listdir(d) if f.endswith(".kicad_sym"))
+    stamp = hashlib.sha1(repr([(f, os.path.getsize(os.path.join(d, f)), os.stat(os.path.join(d, f)).st_mtime_ns)
+                               for f in files]).encode() + d.encode()).hexdigest()[:16]
+    cache = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "epro2kicad",
+                         f"kicad-symbols-{stamp}.json")
+    try:
+        with open(cache, encoding="utf-8") as f:
+            _stock_index = {lib: {k: tuple(v) for k, v in syms.items()} for lib, syms in json.load(f).items()}
+        return _stock_index
+    except (OSError, ValueError):
+        pass
+    idx = {f[:-len(".kicad_sym")]: _symbol_spans(os.path.join(d, f)) for f in files}
+    try:
+        os.makedirs(os.path.dirname(cache), exist_ok=True)
+        for old in os.listdir(os.path.dirname(cache)):  # one index is enough
+            if old.startswith("kicad-symbols-") and old.endswith(".json"):
+                os.remove(os.path.join(os.path.dirname(cache), old))
+        tmp = f"{cache}.{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(idx, f)
+        os.replace(tmp, cache)
+    except OSError:
+        pass
+    _stock_index = idx
+    return idx
+
+
+class _Library(dict):
+    """The symbols of one KiCad library by name, each parsed when it is first asked for: a part needs one or two
+    symbols of a library that can hold thousands (15 MB of text)."""
+
+    def __init__(self, path: str, spans: dict):
+        super().__init__()
+        self._path, self._spans = path, spans
+
+    def _load(self, name):
+        if dict.__contains__(self, name):
+            return dict.__getitem__(self, name)
+        span = self._spans.get(name)
+        if span is None:
+            return None
+        with open(self._path, "rb") as f:
+            f.seek(span[0])
+            node = loads(f.read(span[1]).decode("utf-8"))
+        dict.__setitem__(self, name, node)
+        return node
+
+    def get(self, name, default=None):
+        node = self._load(name)
+        return default if node is None else node
+
+    def __getitem__(self, name):
+        node = self._load(name)
+        if node is None:
+            raise KeyError(name)
+        return node
+
+    def __contains__(self, name):
+        return name in self._spans
+
+    def __iter__(self):
+        return iter(self._spans)
+
+    def __len__(self):
+        return len(self._spans)
+
+    def __bool__(self):
+        return bool(self._spans)
+
+    def keys(self):
+        return self._spans.keys()
+
+    def values(self):
+        return [self[k] for k in self._spans]
+
+    def items(self):
+        return [(k, self[k]) for k in self._spans]
 
 
 def stock_symbols(lib: str) -> dict:
     """Symbols of an installed KiCad library (e.g. "power", "Device") by name; {} if KiCad's libraries aren't found."""
     if lib not in _stock_cache:
-        syms = {}  # filled before publishing: the LCSC provider reads libraries from several threads
-        paths = [os.path.join(d, f"{lib}.kicad_sym") for d in STOCK_DIRS if d]
-        paths.append(os.path.join(os.path.dirname(__file__), "templates", f"{lib}.kicad_sym"))
-        path = next((x for x in paths if os.path.exists(x)), None)
-        if path:
+        d = next((x for x in STOCK_DIRS if x and os.path.isdir(x)), None)
+        path = os.path.join(d, f"{lib}.kicad_sym") if d else ""
+        spans = stock_index().get(lib) if path and os.path.exists(path) else None
+        if spans is None:  # not installed (or written another way): the copy that comes with the converter
+            path = next((x for x in [os.path.join(x, f"{lib}.kicad_sym") for x in STOCK_DIRS if x]
+                         + [os.path.join(os.path.dirname(__file__), "templates", f"{lib}.kicad_sym")]
+                         if os.path.exists(x)), None)
+            spans = _symbol_spans(path) if path else {}
+        if path and not spans:  # a library not laid out as KiCad writes them: read it whole
+            syms = {}
             for x in loads(open(path, encoding="utf-8").read()):
                 if isinstance(x, list) and x and x[0] == "symbol":
                     syms[x[1]] = x
-        _stock_cache[lib] = syms
+            _stock_cache[lib] = syms
+        else:
+            _stock_cache[lib] = _Library(path or "", spans)
     return _stock_cache[lib]
 
 

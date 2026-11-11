@@ -12,7 +12,8 @@ OUTLINE, MULTI = 11, 12
 DOCUMENT, MECHANICAL = 13, 14
 HOLE = 47
 COMP_SHAPE, COMP_MARKING, PIN_SOLDERING, PIN_FLOATING = 48, 49, 50, 51
-INNER_FIRST, INNER_LAST = 15, 44
+INNER_FIRST, INNER_LAST = 15, 46
+BACK_SIDE = {BOTTOM, BOT_SILK, BOT_MASK, BOT_PASTE, BOT_ASSY, 59}  # what EasyEDA draws mirrored (59: bottom stiffener)
 FIRST_CUSTOM_USER = 5  # User.1 is spare, User.2-4 hold the 3D shell layers
 
 # Non copper layers (front variant).  None = dropped.
@@ -70,7 +71,7 @@ class LayerMap:
     def __init__(self, inner_ids: list[int] | None = None, custom: dict[int, str] | None = None):
         """`custom`: EasyEDA custom layer id -> its name; each gets a named KiCad user layer (User.5 on)."""
         self.inner = {}
-        for k, lid in enumerate(sorted(inner_ids or [])):
+        for k, lid in enumerate(sorted(inner_ids or [])[:30]):  # KiCad has 30 inner layers
             self.inner[lid] = f"In{k + 1}.Cu"
         self.user = {}  # EasyEDA id -> (KiCad layer, name)
         for k, (lid, name) in enumerate(sorted((custom or {}).items())):
@@ -100,6 +101,11 @@ class LayerMap:
 
     def copper_layers(self) -> list[str]:
         return ["F.Cu"] + [self.inner[k] for k in sorted(self.inner)] + ["B.Cu"]
+
+
+def is_back(lid: int) -> bool:
+    """An EasyEDA layer on the bottom side: its texts and images are mirrored."""
+    return lid in BACK_SIDE
 
 
 def is_copper(name: str) -> bool:

@@ -7,6 +7,7 @@ import base64
 import io
 import json
 import os
+import re
 import zipfile
 from collections import Counter
 from dataclasses import dataclass, field
@@ -199,7 +200,8 @@ def _load_v2(zf: zipfile.ZipFile, names: list[str], pj_name: str) -> Project:
 
 
 def ttf_key(text: str, family: str, font_size: float) -> str:
-    return f"{text}\0{family}\0{round(font_size / 10)}"
+    """Key of EasyEDA's cached rendering of a text: text, font family, size in its internal unit (10 mil)."""
+    return f"{text}\0{family}\0{round(font_size / 10, 2):g}"
 
 
 def _ttf_boxes(lines) -> dict:
@@ -212,7 +214,11 @@ def _ttf_boxes(lines) -> dict:
         if not (isinstance(arr, list) and len(arr) >= 5 and arr[0] == "FONT" and isinstance(arr[-1], list)):
             continue
         if len(arr) >= 12:  # 1.6: text, family, size/10, ..., box w, box h, outlines
-            key, w, h = f"{arr[1]}\0{arr[2]}\0{arr[3]}", arr[-3], arr[-2]
+            try:
+                size = f"{round(float(arr[3]), 2):g}"
+            except (TypeError, ValueError):
+                size = str(arr[3])
+            key, w, h = f"{arr[1]}\0{arr[2]}\0{size}", arr[-3], arr[-2]
         else:  # 1.4: record id, box w, box h, outlines
             key, w, h = str(arr[1]), arr[2], arr[3]
         boxes = []
@@ -234,10 +240,40 @@ def _ttf_boxes(lines) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _ttf_boxes_v3(recs: list[Rec]) -> dict:
+    """Like _ttf_boxes for a 3.x FONT document.  A record's id is the key [text, family, size / 10, thickness,
+    bold, italic, reverse, expansion]; it carries the box (mil) and the outlines (10 mil, from the box's
+    bottom-left corner, Y up).  Fonts EasyEDA couldn't render have no outlines, inverted texts hold the plate
+    instead of the letters: both are left out."""
+    rows = []
+    for r in recs:
+        if r.type != "FONT" or not isinstance(r.d.get("path"), list):
+            continue
+        try:
+            key = json.loads(r.id)
+        except ValueError:
+            continue
+        if not isinstance(key, list) or len(key) < 3 or (len(key) > 6 and key[6]):
+            continue
+        rows.append(["FONT", key[0], key[1], key[2], 0, 0, 0, 0, 0, r.d.get("width") or 0, r.d.get("height") or 0,
+                     r.d["path"]])
+    return _ttf_boxes(rows)
+
+
+# rows nothing here reads: editor state (what is shown, which layer is active, panelisation ...), the fillers of
+# EasyEDA's own format conversion, and in a footprint the board-level tables it is saved with.  Their payload isn't
+# even parsed: in a big project they are a third of all rows
+_SKIP = {"ELE_PLACEHOLDER", "META_PLACEHOLDER", "PRIMITIVE", "PREFERENCE", "PANELIZE", "RULE_TEMPLATE",
+         "ACTIVE_LAYER", "META_MODIFY"}
+_SKIP_IN = {"FOOTPRINT": {"LAYER", "LAYER_PHYS", "SILK_OPTS", "RULE", "RULE_SELECTOR", "NET", "PAD_NET"}}
+_ROW_TYPE = re.compile(r'"type":"([A-Z_0-9]+)"')
+
+
 def parse_epru(data: bytes) -> list[tuple[dict, list[Rec]]]:
     """Return [(dochead, records)] from a v3 .epru/.elibu stream."""
     docs: list[tuple[dict, dict[str, tuple[int, dict, dict]], list[str]]] = []
     cur = None
+    skip = _SKIP
     line_no = 0
     for raw_line in data.decode("utf-8", errors="replace").splitlines():
         line_no += 1
@@ -249,6 +285,9 @@ def parse_epru(data: bytes) -> list[tuple[dict, list[Rec]]]:
         sep = line.find("||")
         if sep < 0:
             continue
+        m = _ROW_TYPE.search(line, 0, sep)
+        if m and m.group(1) in skip:
+            continue
         try:
             outer = json.loads(line[:sep])
             inner_s = line[sep + 2:]
@@ -258,6 +297,7 @@ def parse_epru(data: bytes) -> list[tuple[dict, list[Rec]]]:
         if outer.get("type") == "DOCHEAD":
             cur = (inner or {}, {}, [])
             docs.append(cur)
+            skip = _SKIP | _SKIP_IN.get((inner or {}).get("docType"), set())
             continue
         if cur is None:
             continue
@@ -304,12 +344,17 @@ def _load_v3(zf: zipfile.ZipFile, names: list[str]) -> Project:
     sch_docs = {}
     pages = []
     boards = {}
+    ttf: dict = {}
     for head, recs in raw_docs:
         dt = head.get("docType")
         uuid = head.get("uuid") or ""
+        if any(r.type == "DELETE_DOC" and r.d.get("isDelete") for r in recs):
+            continue  # deleted in EasyEDA; the export still carries its last content
         meta = _meta(recs)
         title = meta.get("title") or uuid
-        if dt == "SYMBOL":
+        if dt == "FONT":
+            ttf.update(_ttf_boxes_v3(recs))
+        elif dt == "SYMBOL":
             flip_v3_sch_y(recs)
             d = Doc(uuid, title, recs, dict(meta))
             d.meta["symbolType"] = meta.get("docType") or 2
@@ -338,6 +383,8 @@ def _load_v3(zf: zipfile.ZipFile, names: list[str]) -> Project:
                 if r.type == "BLOB":
                     url = r.d.get("url") or r.d.get("data") or r.d.get("content") or ""
                     proj.blobs[r.id] = url
+    for d in proj.pcbs.values():  # EasyEDA's renderings of TrueType texts are kept once per project
+        d.meta["ttf"] = ttf
     for uuid, (title, meta) in sch_docs.items():
         proj.schematics[uuid] = Schematic(uuid, title)
     for k, (uuid, title, meta, recs) in enumerate(pages):
@@ -359,6 +406,11 @@ def _load_v3(zf: zipfile.ZipFile, names: list[str]) -> Project:
     return proj
 
 
+def _designators(docs) -> set:
+    return {r.str("value") for d in docs for r in d.recs
+            if r.type == "ATTR" and r.d.get("key") == "Designator" and r.str("value")}
+
+
 def _add_orphan_boards(proj: Project) -> None:
     used_s = {b.schematic for b in proj.boards}
     used_p = {b.pcb for b in proj.boards}
@@ -368,6 +420,19 @@ def _add_orphan_boards(proj: Project) -> None:
     for u, s in proj.schematics.items():
         if u not in used_s and s.pages:
             proj.boards.append(Board(s.name, u, None))
+    # a schematic and a PCB that lost the board they shared (migrated projects): put them back together when they
+    # have the same name, or are the only two halves left, and are about the same parts
+    for half in [b for b in proj.boards if b.schematic and not b.pcb]:
+        rest = [b for b in proj.boards if b.pcb and not b.schematic]
+        named = [b for b in rest if b.name.strip().lower() == half.name.strip().lower()]
+        cand = named[0] if len(named) == 1 else rest[0] if len(rest) == 1 and not named else None
+        if cand is None:
+            continue
+        on_pcb = _designators([proj.pcbs[cand.pcb]])
+        in_sch = _designators(pg.doc for pg in proj.schematics[half.schematic].pages)
+        if on_pcb and len(on_pcb & in_sch) >= 0.5 * len(on_pcb):
+            half.pcb = cand.pcb
+            proj.boards.remove(cand)
 
 
 # ---------------------------------------------------------------------------

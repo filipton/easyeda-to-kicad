@@ -95,6 +95,7 @@ class Rules:
     blind: dict = field(default_factory=dict)  # blind / buried via rule name -> (start layer id, end layer id)
     defaults: dict = field(default_factory=dict)  # type -> name
     hole_to_hole: float | None = None
+    device_clearance: float | None = None  # component to component, 0 = not checked
     mask: float = 2.0
     paste: float = 0.0
     via_tented: bool = True
@@ -106,6 +107,7 @@ class Rules:
     pair_rules: dict = field(default_factory=dict)  # differential pair name -> {type: name}
     eqlen_rules: dict = field(default_factory=dict)  # equal-length group name -> {type: name}
     pour_safe: dict = field(default_factory=dict)  # pour id -> SAFE profile name used for the pour (v3)
+    net_copper: dict = field(default_factory=dict)  # net -> SAFE profile between its copper and pours (v3)
 
     def default(self, typ: str):
         name = self.defaults.get(typ)
@@ -147,17 +149,63 @@ def _thermal_v3(d: dict) -> Thermal:
                    float(d.get("spoSpac") or 10), float(d.get("spoAng") or 90))
 
 
+def _unmangle(recs) -> dict:
+    """Projects migrated from EasyEDA's old format can carry every rule as type OTHER, its first three values
+    stored under OTHER's field names (seen in 3.x files).  The rule's name and the shape of the values say what
+    it was: -> record id -> (real type, context in that type's own form)."""
+    rules = [r for r in recs if r.type == "RULE" and str(r.d.get("ruleType")) == "OTHER"
+             and isinstance(r.d.get("context"), dict)]
+    if len(rules) < 2 or any(r.type == "RULE" and str(r.d.get("ruleType")) != "OTHER" for r in recs):
+        return {}
+    out = {}
+    for r in rules:
+        ctx, name = r.d["context"], str(r.d.get("name") or "")
+        a, b, c = ctx.get("deviceClearance"), ctx.get("thru2SmdClearance"), ctx.get("holeClearance")
+        unit = ctx.get("unit", "mil")
+        if isinstance(a, list):
+            # the spacing table of the old format: its columns aren't the ones known here (the board's own vias sit
+            # closer than its "via" cell), so only what is certain is kept: copper to copper, to the board outline
+            # and to holes, from the track row
+            try:
+                row = [float(v) for v in a[0]]
+                cu = min(v for v in row[:8] if v > 0)
+                edge = float(a[8][0]) if len(a) > 8 and a[8][0] else cu
+                hole = float(a[9][0]) if len(a) > 9 and a[9][0] else cu
+            except (TypeError, ValueError, IndexError):
+                continue
+            table = [[cu] * (i + 1) for i in range(8)] + [[edge] * 9, [hole] * 10]
+            out[r.id] = ("SAFE", {"unit": unit, "safeSpacing": [{"content": table}]})
+        elif name.lower().startswith("copperregion"):  # clearance, -, how pads connect
+            conn = {"0": "DIVERGENCE", "1": "DIRECT", "2": "NONE"}.get(str(c), "DIVERGENCE")
+            pad = {"content": [{"connType": conn, "spoWidth": 10, "spoSpac": 10, "spoAng": 90}]}
+            out[r.id] = ("COPPER", {"unit": unit, "sglPad": pad, "mulPad": pad, "_clearance": a})
+        elif name == "viaSize":
+            continue  # only half of it survived (no drill sizes): the board's own vias are used
+        elif name == "Common" or (a in (0, None) and b in (0, None)):
+            out[r.id] = ("OTHER", ctx)
+        elif all(isinstance(v, (int, float)) for v in (a, b, c)) and a <= b <= c:  # width: min, default, max
+            out[r.id] = ("TRACK", {"unit": unit, "track": {"content": [{"stroMin": a, "stroDef": b, "stroMax": c}]}})
+    return out
+
+
 def parse_rules(recs) -> Rules:
     R = Rules()
+    fixed = _unmangle(recs)
     for r in recs:
         if r.type != "RULE":
             continue
         typ = str(r.d.get("ruleType") or "")
         typ = V2_TYPES.get(typ, typ)
         name = r.d.get("name") or typ
-        if r.d.get("isDefault") in (True, 1, "1"):
-            R.defaults[typ] = name
         ctx = r.d.get("context")
+        if fixed:
+            if r.id not in fixed:
+                continue
+            typ, ctx = fixed[r.id]
+            if name == "trackWidth" or typ != "TRACK":  # the net classes' width rules aren't defaults
+                R.defaults.setdefault(typ, name)
+        elif r.d.get("isDefault") in (True, 1, "1"):
+            R.defaults[typ] = name
         data = r.d.get("data")
         if isinstance(ctx, dict):
             unit = ctx.get("unit", "mil")
@@ -174,7 +222,8 @@ def parse_rules(recs) -> Rules:
                 R.via[name] = tuple(_mil(ctx.get(k), unit) for k in
                                     ("minRadius", "defRadius", "maxRadius", "minInner", "defInner", "maxInner"))
             elif typ == "COPPER":
-                R.copper[name] = CopperRule(_thermal_v3(_v3_first(ctx, "sglPad")), _thermal_v3(_v3_first(ctx, "mulPad")))
+                R.copper[name] = CopperRule(_thermal_v3(_v3_first(ctx, "sglPad")), _thermal_v3(_v3_first(ctx, "mulPad")),
+                                            clearance=_mil(ctx["_clearance"], unit) if ctx.get("_clearance") else None)
             elif typ == "PLANE":
                 t = _thermal_v3(_v3_first(ctx, "mulPad"))
                 R.plane[name] = CopperRule(t, t)
@@ -195,10 +244,12 @@ def parse_rules(recs) -> Rules:
             elif typ == "OTHER":
                 if ctx.get("holeClearance"):
                     R.hole_to_hole = _mil(ctx.get("holeClearance"), unit)
-            elif typ == "SOLDER" and r.d.get("isDefault"):
+                if ctx.get("deviceClearance") is not None:
+                    R.device_clearance = _mil(ctx.get("deviceClearance"), unit)
+            elif typ == "SOLDER" and r.d.get("isDefault") and not fixed:
                 R.mask = _mil(ctx.get("padTopExpan", 2), unit)
                 R.via_tented = float(ctx.get("viaTopExpan", -1000) or 0) <= -999
-            elif typ == "PASTE" and r.d.get("isDefault"):
+            elif typ == "PASTE" and r.d.get("isDefault") and not fixed:
                 R.paste = _mil(ctx.get("padTopExpan", 0), unit)
         elif isinstance(data, list):
             unit = data[0] if data and isinstance(data[0], str) else "mil"
@@ -254,13 +305,17 @@ def parse_rules(recs) -> Rules:
         if isinstance(r.d.get("rules"), dict):  # v2
             for k, v in r.d["rules"].items():
                 rules[V2_TYPES.get(str(k), str(k))] = v
-        for k in ("ruleKeyValue", "copperValue", "innerPlaneValue"):
-            if isinstance(r.d.get(k), dict) and k == "ruleKeyValue":
-                rules.update(r.d[k])
-        if kind == "POUR" and isinstance(r.d.get("copperValue"), dict):
+        if isinstance(r.d.get("ruleKeyValue"), dict):
+            rules.update(r.d["ruleKeyValue"])
+        if fixed and "OTHER" in rules:
+            nm = rules.pop("OTHER")
+            for typ_, table in (("TRACK", R.track), ("COPPER", R.copper), ("SAFE", R.safe)):
+                if nm in table:
+                    rules[typ_] = nm
+        if kind in ("POUR", "NET") and isinstance(r.d.get("copperValue"), dict):
             cv = r.d["copperValue"].get("COPPER")
             if cv and cv in R.safe:
-                R.pour_safe[key] = cv
+                (R.pour_safe if kind == "POUR" else R.net_copper)[key] = cv
         if not rules:
             continue
         if kind == "NET":

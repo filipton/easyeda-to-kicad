@@ -97,6 +97,7 @@ class Text:
     knockout: bool = False
     face: str | None = None
     name: str | None = None  # property name for user properties
+    line_spacing: float = 1.0
 
     def flipped(self) -> "Text":
         t = Text(**self.__dict__)
@@ -228,6 +229,8 @@ def _font(t: Text) -> list:
     if t.face:
         f.append([Sym("face"), t.face])
     f.append([Sym("size"), rnd(t.size[1], 4), rnd(t.size[0], 4)])
+    if abs(t.line_spacing - 1.0) > 1e-4:
+        f.append([Sym("line_spacing"), rnd(t.line_spacing, 4)])
     f.append([Sym("thickness"), rnd(t.thickness, 4)])
     return f
 
@@ -435,8 +438,10 @@ def footprint_lib_sexp(fp: Footprint) -> list:
     for t in fp.texts:
         if t.kind in ("reference", "value"):
             n.append(text_sexp(t, t.angle, stable_uuid(fp.name, "lib", t.kind)))
-    for k, v in fp.properties.items():
-        n.append(_prop(k, v, "F.Fab", None))
+    props = {"Datasheet": "", "Description": fp.descr or ""}
+    props.update(fp.properties)
+    for k, v in props.items():
+        n.append(_prop(k, v, "F.Fab", stable_uuid(fp.name, "lib-prop", k)))
     if fp.attr:
         n.append([Sym("attr")] + [Sym(a) for a in fp.attr])
     if fp.net_tie:
@@ -474,7 +479,11 @@ def footprint_board_sexp(fp: Footprint, lib_id: str, pos: tuple, angle: float, b
         if t.kind in ("reference", "value"):
             n.append(text_sexp(t, angle + t.angle, stable_uuid(uid, t.kind)))
     fab = "B.Fab" if back else "F.Fab"
-    for k, v in list(fp.properties.items()) + list(extra_props.items()):
+    # every KiCad footprint has these two fields; left out, KiCad adds them itself with ids that change every time
+    props = {"Datasheet": "", "Description": ""}
+    props.update(fp.properties)
+    props.update(extra_props)
+    for k, v in props.items():
         if k in ("Reference", "Value"):
             continue
         n.append(_prop(k, v, fab, stable_uuid(uid, "prop", k), at=(0, 0), angle=angle))
@@ -529,6 +538,9 @@ class FpOptions:
     default_mask_mil: float | None = 2.0
     default_paste_mil: float = 0.0
     courtyard: bool = True
+    # room around pads and body.  KiCad's libraries use 0.25 mm; a translated board gets half of EasyEDA's
+    # component-to-component clearance, so that touching courtyards mean what that rule means
+    courtyard_margin: float = 0.25
 
 
 def _shape_graphics(shape: geom.Shape, layer: str, width: float, origin, fill=False) -> list[Graphic]:
@@ -563,6 +575,20 @@ def _shape_graphics(shape: geom.Shape, layer: str, width: float, origin, fill=Fa
             out.append(Graphic("curve", layer, width, [kpt(s.a, origin), kpt(s.c1, origin), kpt(s.c2, origin),
                                                       kpt(s.b, origin)]))
     return out
+
+
+def fit_string(r: Rec, text: str, angle: float, back: bool, ttf: dict | None = None) -> textfit.Fit:
+    """Where KiCad has to put the text of a STRING / ATTR record.  `ttf`: EasyEDA's renderings of the project's
+    TrueType texts (easyeda.project.ttf_key -> box)."""
+    family = r.str("fontFamily", "default") or "default"
+    size, stroke = r.num("fontSize", 45), r.num("strokeWidth", 6)
+    if family in textfit.LINE_FONTS:
+        return textfit.fit(text, r.num("x"), r.num("y"), angle, r.str("origin"), size, stroke, back, family)
+    box = None
+    if ttf:
+        from ..easyeda.project import ttf_key
+        box = ttf.get(r.id) or ttf.get(ttf_key(text, family, size))
+    return textfit.fit_ttf(text, r.num("x"), r.num("y"), angle, r.str("origin"), size, back, box, stroke)
 
 
 def convert_pad(r: Rec, lm: L.LayerMap, origin, opts: FpOptions) -> Pad | None:
@@ -787,7 +813,10 @@ def convert_footprint(doc, lm: L.LayerMap | None = None, opts: FpOptions | None 
                 layer = "Edge.Cuts"
             w = mm(r.num("width"))
             for shape in geom.parse_contours(r.d.get("path")):
-                fp.graphics += _shape_graphics(shape, layer, w if layer != "Edge.Cuts" else 0.05, origin)
+                gs = _shape_graphics(shape, layer, w if layer != "Edge.Cuts" else 0.05, origin)
+                if r.int("layerId") == L.MULTI and gs and _inside_drilled_pad(gs, fp.pads):
+                    continue  # the outline of a pad's own slot (imported footprints draw it): the pad's hole is it
+                fp.graphics += gs
         elif r.type == "FILL":
             lid = r.int("layerId")
             shapes = geom.parse_contours(r.d.get("path"))
@@ -815,16 +844,15 @@ def convert_footprint(doc, lm: L.LayerMap | None = None, opts: FpOptions | None 
             layer = lm.to_kicad(r.int("layerId"))
             if not layer or not r.str("text"):
                 continue
-            ff = r.str("fontFamily", "default")
-            if ff and ff != "default":
-                x, y, w, h = textfit.fit_ttf(r.str("text"), r.num("x"), r.num("y"), r.num("angle"), r.str("origin"),
-                                             r.num("fontSize", 45), layer.startswith("B."))
-            else:
-                x, y, w, h = textfit.fit(r.str("text"), r.num("x"), r.num("y"), r.num("angle"), r.str("origin"),
-                                         r.num("fontSize", 45), r.num("strokeWidth", 6), layer.startswith("B."))
-            t = Text("user", r.str("text"), kpt((x, y), origin), norm_deg(r.num("angle")), layer,
-                     (rnd(w * MIL, 4), rnd(h * MIL, 4)), max(0.05, mm(r.num("strokeWidth", 6))), ("", ""),
-                     mirror=layer.startswith("B."), knockout=r.bool("reverse"))
+            ff = r.str("fontFamily", "default") or "default"
+            # a text's mirror flag swaps what its layer implies (bottom layers are read from below)
+            back = L.is_back(r.int("layerId")) != r.bool("mirror")
+            ft = fit_string(r, r.str("text"), r.num("angle"), back)
+            t = Text("user", ft.text, kpt((ft.x, ft.y), origin), norm_deg(r.num("angle")), layer,
+                     (rnd(ft.w * MIL, 4), rnd(ft.h * MIL, 4)), max(0.05, mm(r.num("strokeWidth", 6))),
+                     (ft.hjust, ""), mirror=back, line_spacing=ft.line_spacing,
+                     # EasyEDA inverts only text in outline fonts; its own line fonts are always drawn plain
+                     knockout=r.bool("reverse") and ff not in textfit.LINE_FONTS)
             fp.texts.append(t)
         elif r.type == "REGION":
             layer = lm.to_kicad(r.int("layerId"))
@@ -832,9 +860,22 @@ def convert_footprint(doc, lm: L.LayerMap | None = None, opts: FpOptions | None 
             z = _region_zone(r, layer, flags, origin)
             if z:
                 fp.zones.append(z)
+    copper_into_pads(fp)
     _finish_footprint(fp, opts)
     fp.net_tie = net_tie_groups(fp)
     return fp
+
+
+def _inside_drilled_pad(gs: list, pads: list) -> bool:
+    """The drawing lies within one drilled pad (with a little room around it)."""
+    x0, y0, x1, y1 = geom.bbox([q for g in gs for q in g.bbox_pts()])
+    for p in pads:
+        if p.drill:
+            bx0, by0, bx1, by1 = geom.bbox(p.extent_pts())
+            m = 0.15
+            if bx0 - m <= x0 and x1 <= bx1 + m and by0 - m <= y0 and y1 <= by1 + m:
+                return True
+    return False
 
 
 def _seg_dist(a, b, c, d) -> float:
@@ -864,13 +905,12 @@ def _outline(g: Graphic) -> tuple[list, bool]:
     return list(g.pts), False  # line, arc (start, mid, end), curve: as a polyline
 
 
-def net_tie_groups(fp: Footprint) -> list:
-    """Pads that the footprint's own copper drawing connects (a PCB antenna joins its feed to GND on purpose).
-    EasyEDA treats that copper as part of the footprint; in KiCad it has no net and would short them unless the
-    footprint declares those pads a net tie."""
+def _copper_pieces(fp: Footprint):
+    """The footprint's own copper drawing: (the drawings, the piece each belongs to, piece -> numbers of the pads
+    it touches).  Drawings that touch each other are one piece of copper."""
     cu = [g for g in fp.graphics if L.is_copper(g.layer)]
-    if not cu or len(cu) > 400 or len(fp.pads) < 2:
-        return []
+    if not cu or len(cu) > 400 or not fp.pads:
+        return cu, [], {}
     outl = [_outline(g) for g in cu]
 
     def touches(i, poly, filled, tol):
@@ -890,7 +930,7 @@ def net_tie_groups(fp: Footprint) -> list:
             parent[i] = parent[parent[i]]
             i = parent[i]
         return i
-    for i in range(len(cu)):  # drawings that touch each other are one piece of copper
+    for i in range(len(cu)):
         for j in range(i + 1, len(cu)):
             if cu[i].layer == cu[j].layer and touches(i, outl[j][0], outl[j][1], cu[j].width / 2 + 0.001):
                 parent[find(i)] = find(j)
@@ -903,8 +943,75 @@ def net_tie_groups(fp: Footprint) -> list:
         for i, g in enumerate(cu):
             if on(pad, g.layer) and touches(i, box, True, 0.001):
                 groups.setdefault(find(i), set()).add(pad.number)
-    out = sorted({",".join(sorted(nums, key=lambda x: (len(x), x))) for nums in groups.values() if len(nums) > 1})
-    return out
+    return cu, [find(i) for i in range(len(cu))], groups
+
+
+def net_tie_groups(fp: Footprint) -> list:
+    """Pads that the footprint's own copper drawing connects (a PCB antenna joins its feed to GND on purpose).
+    EasyEDA treats that copper as part of the footprint; in KiCad it has no net and would short them unless the
+    footprint declares those pads a net tie."""
+    groups = _copper_pieces(fp)[2]
+    return sorted({",".join(sorted(nums, key=lambda x: (len(x), x))) for nums in groups.values() if len(nums) > 1})
+
+
+def _copper_area(g: Graphic) -> list | None:
+    """The area a copper drawing covers as polygons; None for what a pad can't take over (rings, curves)."""
+    w = g.width
+    if g.kind == "poly":
+        pts = list(g.pts)
+    elif g.kind == "rect":
+        (x0, y0), (x1, y1) = g.pts
+        pts = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+    elif g.kind == "circle":
+        c, e = g.pts
+        return [geom.circle_points(c, math.hypot(e[0] - c[0], e[1] - c[1]) + w / 2, 0.005)] if g.fill else None
+    elif g.kind == "line":
+        return [geom.stadium(g.pts[0], g.pts[1], w / 2)] if w > 0 else None
+    elif g.kind == "arc":
+        a, m, b = g.pts
+        d = 2 * (a[0] * (m[1] - b[1]) + m[0] * (b[1] - a[1]) + b[0] * (a[1] - m[1]))
+        if w <= 0 or abs(d) < 1e-12:
+            return None
+        sq = [q[0] * q[0] + q[1] * q[1] for q in (a, m, b)]
+        c = ((sq[0] * (m[1] - b[1]) + sq[1] * (b[1] - a[1]) + sq[2] * (a[1] - m[1])) / d,
+             (sq[0] * (b[0] - m[0]) + sq[1] * (a[0] - b[0]) + sq[2] * (m[0] - a[0])) / d)
+        r = math.hypot(a[0] - c[0], a[1] - c[1])
+        t0, t1, t2 = (math.atan2(q[1] - c[1], q[0] - c[0]) for q in (a, m, b))
+        sweep = (t2 - t0) % (2 * math.pi)
+        if (t1 - t0) % (2 * math.pi) > sweep:  # the middle isn't on that way round: the other one
+            sweep -= 2 * math.pi
+        n = max(2, int(abs(sweep) * r / 0.2) + 1)
+        arc = [(c[0] + r * math.cos(t0 + sweep * k / n), c[1] + r * math.sin(t0 + sweep * k / n)) for k in range(n + 1)]
+        return [geom.stadium(p, q, w / 2) for p, q in zip(arc, arc[1:])]
+    else:
+        return None
+    out = [pts] if g.fill and len(pts) >= 3 else []
+    if w > 0:  # the outline's own stroke
+        out += [geom.stadium(p, q, w / 2) for p, q in zip(pts, pts[1:] + pts[:1]) if p != q]
+    return out or None
+
+
+def copper_into_pads(fp: Footprint) -> None:
+    """Copper drawn in a footprint on top of one pad (the tab of a power transistor, a wider land for cooling) is
+    that pad's copper in EasyEDA.  A KiCad drawing has no net and shorts the pad it lies on; there such copper is
+    a pad of its own with the same number, and that is what it becomes."""
+    cu, piece, groups = _copper_pieces(fp)
+    single = {k: next(iter(nums)) for k, nums in groups.items() if len(nums) == 1}
+    if not single:
+        return
+    done = set()
+    for g, k in zip(cu, piece):
+        areas = _copper_area(g) if k in single else None
+        if not areas:
+            continue
+        for poly in areas:
+            at, room = geom.inner_point(poly)
+            at = (rnd(at[0]), rnd(at[1]))
+            d = rnd(min(max(room, 0.005), 0.1) * 2)  # the anchor every KiCad pad needs, inside the copper
+            fp.pads.append(Pad(single[k], "smd", "custom", at, 0.0, (d, d), [g.layer],
+                               primitives=[[(rnd(x - at[0]), rnd(y - at[1])) for x, y in poly]]))
+        done.add(id(g))
+    fp.graphics = [g for g in fp.graphics if id(g) not in done]
 
 
 def _region_zone(r: Rec, layer, flags, origin) -> Zone | None:
@@ -959,8 +1066,9 @@ def _finish_footprint(fp: Footprint, opts: FpOptions) -> None:
         ext = [(-0.5, -0.5), (0.5, 0.5)]
     x0, y0, x1, y1 = geom.bbox(ext)
     if opts.courtyard and pts:
-        cx0, cy0 = _snap_out(x0 - 0.25, up=False), _snap_out(y0 - 0.25, up=False)
-        cx1, cy1 = _snap_out(x1 + 0.25), _snap_out(y1 + 0.25)
+        m = opts.courtyard_margin
+        cx0, cy0 = _snap_out(x0 - m, up=False), _snap_out(y0 - m, up=False)
+        cx1, cy1 = _snap_out(x1 + m), _snap_out(y1 + m)
         fp.graphics.append(Graphic("rect", "F.CrtYd", 0.05, [(cx0, cy0), (cx1, cy1)]))
     # fields, like KiCad's own libraries: Reference on silk above, Value on fab below
     fp.texts.insert(0, Text("reference", "REF**", (rnd((x0 + x1) / 2, 3), rnd(y0 - 1.0, 3)), 0, "F.SilkS"))

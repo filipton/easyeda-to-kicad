@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import glob
 import gzip
+import http.client
 import json
 import math
 import os
@@ -20,12 +21,14 @@ import platform
 import re
 import subprocess
 import sys
+import threading
+import time
 import urllib.parse
 import urllib.request
 
 from .easyeda.project import parse_v2_doc
 from .kicad import layers as L
-from .kicad.board import part_fields, resolve_attr, resolve_value
+from .kicad.board import part_fields, resolve_value
 from .kicad.footprint import FpOptions, Model3D, convert_footprint, footprint_lib_sexp, sane_name
 from .kicad.symbol import U, convert_symbol, effects, lib_symbol_sexp, r4
 from .stock import choose, stock_symbol
@@ -73,16 +76,73 @@ def _ssl_context():
     return _SSL
 
 
+_conns = threading.local()  # one kept-alive connection per host and thread
+_gate = threading.BoundedSemaphore(8)  # requests at once, however many boards and parts are worked on
+
+
+def _read(r, deadline: float) -> bytes:
+    """The body of an answer; gives up when it trickles in past the deadline (a part must not hang an import)."""
+    parts = []
+    while True:
+        chunk = r.read(1 << 16)
+        if not chunk:
+            return b"".join(parts)
+        parts.append(chunk)
+        if time.monotonic() > deadline:
+            raise OSError("timed out")
+
+
+def _fetch(url: str, body: bytes | None, headers: dict, timeout: int) -> tuple:
+    """(payload, content encoding) over a connection that stays open: a part needs a handful of requests to the
+    same two hosts, and each new TLS handshake costs more than the request itself."""
+    if urllib.request.getproxies():  # a proxy is configured: let urllib deal with it
+        req = urllib.request.Request(url, data=body, headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as r:
+            return r.read(), r.headers.get("Content-Encoding")
+    pool = _conns.__dict__.setdefault("pool", {})
+    deadline = time.monotonic() + timeout  # for the whole answer: the socket's own timeout only limits each wait
+    for hop in range(4):  # redirects
+        u = urllib.parse.urlsplit(url)
+        path = (u.path or "/") + (f"?{u.query}" if u.query else "")
+        for attempt in (0, 1):
+            c = pool.get((u.scheme, u.netloc))
+            fresh = c is None
+            if fresh:
+                cls = http.client.HTTPSConnection if u.scheme == "https" else http.client.HTTPConnection
+                kw = {"context": _ssl_context()} if u.scheme == "https" else {}
+                c = pool[(u.scheme, u.netloc)] = cls(u.netloc, timeout=timeout, **kw)
+            try:
+                c.request("POST" if body is not None else "GET", path, body=body, headers=headers)
+                r = c.getresponse()
+                payload = _read(r, deadline)
+                break
+            except (http.client.HTTPException, OSError):
+                c.close()
+                pool.pop((u.scheme, u.netloc), None)
+                if fresh or attempt:  # a connection the server closed meanwhile is retried once, on a new one
+                    raise
+        if r.status in (301, 302, 303, 307, 308) and r.getheader("Location"):
+            url = urllib.parse.urljoin(url, r.getheader("Location"))
+            if r.status == 303:
+                body = None
+            continue
+        if r.status >= 400:
+            raise OSError(f"HTTP Error {r.status}: {r.reason}")
+        return payload, r.getheader("Content-Encoding")
+    raise OSError("too many redirects")
+
+
 def _get(url: str, data: dict | None = None, raw: bool = False, timeout: int = 30):
     body = urllib.parse.urlencode(data, doseq=True).encode() if data is not None else None
-    req = urllib.request.Request(url, data=body, headers={"User-Agent": UA, "Accept": "application/json, */*",
-                                                          "Accept-Encoding": "gzip"})  # search answers shrink ~5x
+    headers = {"User-Agent": UA, "Accept": "application/json, */*", "Accept-Encoding": "gzip"}  # answers shrink ~5x
+    if body is not None:
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
     try:
-        with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as r:
-            payload = r.read()
-            if r.headers.get("Content-Encoding") == "gzip":
-                payload = gzip.decompress(payload)
-    except OSError as e:
+        with _gate:
+            payload, enc = _fetch(url, body, headers, timeout)
+        if enc == "gzip":
+            payload = gzip.decompress(payload)
+    except (OSError, http.client.HTTPException) as e:
         raise LcscError(f"request failed: {url}: {e}") from e
     if raw:
         return payload
@@ -124,8 +184,13 @@ def _cached(kind: str, key: str, fetch) -> bytes:
     return data
 
 
-def _known_missing(key: str) -> bool:
-    return os.path.exists(os.path.join(CACHE, "missing", re.sub(r"[^\w.-]", "_", key)))
+def _known_missing(key: str, max_age: float | None = None) -> bool:
+    """The library said it doesn't have this (asked again after `max_age` seconds, if given)."""
+    try:
+        age = time.time() - os.path.getmtime(os.path.join(CACHE, "missing", re.sub(r"[^\w.-]", "_", key)))
+    except OSError:
+        return False
+    return max_age is None or age < max_age
 
 
 def _mark_missing(key: str) -> None:

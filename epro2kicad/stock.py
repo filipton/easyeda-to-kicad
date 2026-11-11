@@ -12,10 +12,9 @@ symbol: a wrong pin mapping is far worse than a non-standard drawing.
 from __future__ import annotations
 
 import functools
-import os
 import re
 
-from .kicad.symbol import STOCK_DIRS, stock_symbols
+from .kicad.symbol import stock_index, stock_symbols
 from .sexp import Sym
 
 # ----------------------------------------------------------------------------------------------- helpers
@@ -607,17 +606,11 @@ _GENERIC_LIBS = {"Device", "Connector_Generic", "Connector_Generic_MountingPin",
 @functools.cache
 def _mpn_index() -> dict:
     """Upper-case stock symbol name -> [(library, name)] over all installed KiCad libraries (names only, fast)."""
-    d = next((x for x in STOCK_DIRS if x and os.path.isdir(x)), None)
     idx: dict[str, list] = {}
-    if not d:
-        return idx
-    for f in os.listdir(d):
-        lib = f[:-len(".kicad_sym")]
-        if not f.endswith(".kicad_sym") or lib in _GENERIC_LIBS:
-            continue
-        with open(os.path.join(d, f), encoding="utf-8") as fh:
-            for m in re.finditer(r'^\t\(symbol "([^"]+)"', fh.read(), re.M):
-                idx.setdefault(m.group(1).upper(), []).append((lib, m.group(1)))
+    for lib, names in stock_index().items():  # kept on disk: reading every library takes seconds
+        if lib not in _GENERIC_LIBS:
+            for name in names:
+                idx.setdefault(name.upper(), []).append((lib, name))
     return idx
 
 
@@ -660,12 +653,28 @@ def _mpn_candidates(mpn: str) -> list:
             whole = k >= len(m) - 4 or m[k] in "-/ (#,_."  # the rest is a package / reel / grade suffix
             out += [(lib, name, whole) for lib, name in idx.get(m[:k], [])]
     if not out:
-        for name, entries in idx.items():
-            if "X" in name and len(name) >= 4:
-                pat = "".join("." if c == "X" else re.escape(c) for c in name)
-                if re.match(pat + r"$|" + pat + r"[-/#]?[A-Z0-9]{0,6}$", mpn):
-                    out += [(lib, n, True) for lib, n in entries]
+        some, rest = _wildcard_names()
+        for rx, entries in some.get(mpn[:2], []) + rest:
+            if rx.match(mpn):
+                out += [(lib, n, True) for lib, n in entries]
     return out
+
+
+@functools.cache
+def _wildcard_names() -> tuple:
+    """Stock symbol names with an "x" wildcard as patterns: ({first two letters: [(pattern, entries)]}, [the ones
+    whose wildcard comes that early]).  Compiled once: there are thousands and every part number is tried."""
+    some: dict = {}
+    rest = []
+    for name, entries in _mpn_index().items():
+        if "X" in name and len(name) >= 4:
+            pat = "".join("." if c == "X" else re.escape(c) for c in name)
+            rx = re.compile(pat + r"$|" + pat + r"[-/#]?[A-Z0-9]{0,6}$")
+            if "X" in name[:2]:
+                rest.append((rx, entries))
+            else:
+                some.setdefault(name[:2], []).append((rx, entries))
+    return some, rest
 
 
 def _by_mpn(part: Part):

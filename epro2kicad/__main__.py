@@ -7,7 +7,7 @@ import os
 import sys
 
 from .convert import Options, convert_project, proj_name
-from .easyeda.project import load
+from .easyeda.project import FormatError, load
 
 
 def main(argv=None) -> int:
@@ -26,9 +26,25 @@ def main(argv=None) -> int:
     ap.add_argument("--kicad-symbols", action="store_true",
                     help="use KiCad's standard symbols for standard parts (resistors, capacitors, diodes, transistors, "
                          "op-amps, connectors, ICs in KiCad's libraries ...); verified against the netlist")
+    ap.add_argument("--tolerance", type=float, default=3.0, metavar="UM",
+                    help="limits missed by this many micrometres or less count as rounding: the rules are written "
+                         "that little lower (default 3; 0 keeps the rules exactly as in EasyEDA)")
     ap.add_argument("--kicad-cli", help="path to kicad-cli (auto-detected otherwise)")
     a = ap.parse_args(argv)
 
+    try:
+        return _run(a)
+    except FormatError as e:  # not an EasyEDA Pro project: one line says so, no traceback
+        print(f"epro2kicad: {e}", file=sys.stderr)
+        return 2
+    except FileNotFoundError as e:
+        if e.filename != a.project:
+            raise
+        print(f"epro2kicad: {a.project}: no such file", file=sys.stderr)
+        return 2
+
+
+def _run(a) -> int:
     if a.list:
         proj = load(a.project)
         print(f"{proj.title}  (EasyEDA Pro v{proj.fmt})")
@@ -40,7 +56,7 @@ def main(argv=None) -> int:
     out = a.out or os.path.join(os.path.dirname(os.path.abspath(a.project)),
                                 proj_name(os.path.splitext(os.path.basename(a.project))[0]) + "-kicad")
     opts = Options(refill_zones=not a.no_refill, run_checks=not a.no_checks, boards=a.board, kicad_cli=a.kicad_cli,
-                   download_3d=a.models, kicad_symbols=a.kicad_symbols)
+                   download_3d=a.models, kicad_symbols=a.kicad_symbols, tolerance=max(a.tolerance, 0.0) / 1000)
     reps = convert_project(a.project, out, opts)
     if not reps:
         print("nothing converted (check --list / --board)", file=sys.stderr)
@@ -51,7 +67,7 @@ def main(argv=None) -> int:
         drc = r.checks.get("drc") or {}
         line = f"{r.board}: {r.out_dir}"
         if con:
-            same = not (con["split"] or con["merged"] or con["missing"])
+            same = con.get("identical", not (con["split"] or con["merged"] or con["missing"]))
             line += f"\n    schematic/PCB nets: {'identical' if same else 'DIFFER (see report)'} ({con['nets_checked']} nets)"
         if drc:
             line += f"\n    unconnected items: {len(drc.get('unconnected_items', []))}"

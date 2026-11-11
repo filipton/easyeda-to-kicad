@@ -529,13 +529,56 @@ def _seg_intersect(p1: Pt, p2: Pt, p3: Pt, p4: Pt) -> bool:
     return (d1 * d2 < 0) and (d3 * d4 < 0)
 
 
+def stadium(a: Pt, b: Pt, r: float, n: int = 8) -> list[Pt]:
+    """Outline of a stroke from a to b with round ends of radius r."""
+    ang = math.atan2(b[1] - a[1], b[0] - a[0]) if a != b else 0.0
+    out = []
+    for c, start in ((b, ang - math.pi / 2), (a, ang + math.pi / 2)):
+        for k in range(n + 1):
+            t = start + math.pi * k / n
+            out.append((c[0] + r * math.cos(t), c[1] + r * math.sin(t)))
+    return out
+
+
+def inner_point(poly: list[Pt]) -> tuple[Pt, float]:
+    """A point well inside a polygon and how far it is from the outline."""
+    def room(q):
+        best = float("inf")
+        for a, b in zip(poly, poly[1:] + poly[:1]):
+            dx, dy = b[0] - a[0], b[1] - a[1]
+            l2 = dx * dx + dy * dy
+            t = 0.0 if l2 == 0 else max(0.0, min(1.0, ((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / l2))
+            best = min(best, math.hypot(q[0] - a[0] - t * dx, q[1] - a[1] - t * dy))
+        return best
+    x0, y0, x1, y1 = bbox(poly)
+    cands = [(sum(q[0] for q in poly) / len(poly), sum(q[1] for q in poly) / len(poly))]
+    for k in range(1, 8):  # middles of the widest spans on a few scan lines
+        y = y0 + (y1 - y0) * k / 8
+        xs = sorted(a[0] + (y - a[1]) * (b[0] - a[0]) / (b[1] - a[1]) for a, b in zip(poly, poly[1:] + poly[:1])
+                    if (a[1] > y) != (b[1] > y))
+        spans = [(xs[i + 1] - xs[i], (xs[i] + xs[i + 1]) / 2) for i in range(0, len(xs) - 1, 2)]
+        if spans:
+            cands.append((max(spans)[1], y))
+    inside = [q for q in cands if point_in_poly(q, poly)]
+    if not inside:
+        return poly[0], 0.0
+    best = max(inside, key=room)
+    return best, room(best)
+
+
 def simplify_collinear(pts: list[Pt], eps: float = 1e-7) -> list[Pt]:
+    """Drop the points that lie on the line between their neighbours (the area stays what it was).
+
+    Repeated points go first: a keyhole bridge that lands on a corner repeats it, and judged against its own copy
+    every copy would look redundant and the corner would be cut off.  Each point is judged against the last one
+    kept, so a run of points on one line can't drift away from it either."""
+    pts = dedupe(pts)
     if len(pts) < 4:
         return pts
-    out = []
+    out: list[Pt] = []
     n = len(pts)
     for i in range(n):
-        a, b, c = pts[i - 1], pts[i], pts[(i + 1) % n]
+        a, b, c = (out[-1] if out else pts[i - 1]), pts[i], pts[(i + 1) % n]
         cross = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])
         if abs(cross) > eps * max(1.0, dist(a, c)):
             out.append(b)

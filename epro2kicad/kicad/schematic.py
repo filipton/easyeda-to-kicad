@@ -13,8 +13,8 @@ from ..easyeda.records import Rec
 from ..sexp import NO, YES, Sym, stable_uuid
 from .board import part_fields, resolve_attr, resolve_value
 from .footprint import sane_name
-from .symbol import (U, LibSymbol, _record_points, align_justify, body_end, convert_symbol, effects, lib_symbol_sexp,
-                     make_power_symbol, power_body_dir, r4, text_size)
+from .symbol import (U, LibSymbol, _record_points, align_justify, convert_symbol, effects, lib_symbol_sexp,
+                     make_power_symbol, on_grid, power_body_dir, r4, text_size)
 
 PAPERS = {"A5": (210, 148), "A4": (297, 210), "A3": (420, 297), "A2": (594, 420), "A1": (841, 594),
           "A0": (1189, 841), "A": (279.4, 215.9), "B": (431.8, 279.4), "C": (558.8, 431.8),
@@ -115,7 +115,7 @@ class SchematicConverter:
         return ls
 
     def P(self, ctx: PageCtx, x, y):
-        return (r4(ctx.ox + x * U), r4(ctx.oy - y * U))
+        return (on_grid(ctx.ox + x * U), on_grid(ctx.oy - y * U))
 
     # ------------------------------------------------------------------ main
     def convert(self) -> SchResult:
@@ -195,16 +195,22 @@ class SchematicConverter:
         return self.proj.symbol_type(self._sym_uuid(at))
 
     def _port_name(self, at: dict) -> str:
-        g = at.get("Global Net Name")
-        if g is not None and g.str("value"):
-            return g.str("value")
-        n = at.get("Name")
-        v = n.str("value") if n is not None else ""
-        if v.startswith("="):
-            dev = at.get("Device")
-            dattrs = self.proj.devices.get(dev.str("value"), {}).get("attributes", {}) if dev else {}
-            v = resolve_attr(dict(dattrs, **{k: a.str("value") for k, a in at.items()}), "Name")
-        return v
+        """Net of a power symbol / net port.  As everywhere in EasyEDA an attribute the instance leaves empty is
+        the device's, and then the symbol's own."""
+        dev = at.get("Device")
+        dattrs = self.proj.devices.get(dev.str("value"), {}).get("attributes", {}) if dev is not None else {}
+        inst = {k: a.str("value") for k, a in at.items()}
+        for src in (inst, dattrs):
+            v = str(src.get("Global Net Name") or "") or str(src.get("Name") or "")
+            if v.startswith("="):
+                v = resolve_attr(dict(dattrs, **inst), "Name")
+            if v:
+                return v
+        doc = self.proj.symbols.get(self._sym_uuid(at))
+        for r in doc.recs if doc is not None else ():
+            if r.type == "ATTR" and not r.str("parentId") and r.str("key") == "Global Net Name" and r.str("value"):
+                return r.str("value")
+        return ""
 
     # ------------------------------------------------------------------ page
     def _frame_box(self, frame: Rec, at: dict):
@@ -407,9 +413,10 @@ class SchematicConverter:
         n.append(self._field(ctx, "Reference", ref, at.get("Designator"), top, ang, mirror=mir, place=ref_at))
         n.append(self._field(ctx, "Value", value, vattr, bot, ang, mirror=mir, place=val_at))
         n.append(self._field(ctx, "Footprint", fp, None, pos, ang, hide=True))
-        ds = dattrs.get("Datasheet", "")
+        ds = str(dattrs.get("Datasheet", "")).strip()
         n.append(self._field(ctx, "Datasheet", ds if not ds.startswith("=") else "", None, pos, ang, hide=True))
-        desc = dev.get("description") or dattrs.get("Description", "")
+        # stripped like every field: KiCad compares the footprint's fields with these, without outer blanks
+        desc = str(dev.get("description") or dattrs.get("Description", "")).strip()
         n.append(self._field(ctx, "Description", desc if not desc.startswith("=") else "", None, pos, ang, hide=True))
         extra = part_fields(merged)
         for k, v in extra.items():

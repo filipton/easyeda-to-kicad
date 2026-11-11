@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 from collections import defaultdict
 
-from .sexp import find_all, loads
+from .sexp import loads
 
 
 def kicad_netlist(cli: str, sch_path: str) -> dict[str, set]:
@@ -76,5 +76,60 @@ def compare(kicad_nets: dict[str, set], pad_nets: dict) -> dict:
         for nd in nodes:
             if nd in pad_nets and not pad_nets[nd]:
                 extra.append((nd, name))
-    return {"rename": rename, "split": split, "merged": merged, "missing": missing, "extra": extra,
+    # pads the PCB connects to others whose pin hangs loose in the schematic (a net of one pad connects nothing)
+    open_ = sorted((nd, en) for en, nodes in e_groups.items() if len(nodes) > 1 for nd in nodes
+                   if (node_k.get(nd) or "").startswith("unconnected-"))
+    return {"rename": rename, "split": split, "merged": merged, "missing": missing, "extra": extra, "open": open_,
             "nets_checked": len(e_groups)}
+
+
+def identical(cmp: dict) -> bool:
+    """The PCB's nets and the schematic's connect the same pins."""
+    return not (cmp["split"] or cmp["merged"] or cmp["missing"] or cmp.get("open"))
+
+
+def pcb_net_names(kicad_nets: dict[str, set], pad_nets: dict, cmp: dict) -> tuple[dict, dict]:
+    """Net names for the board: (pad -> net, EasyEDA net -> net).
+
+    The EasyEDA PCB decides which pads share a net: that is the copper that exists.  The schematic only gives the
+    nets their KiCad names (so that updating the PCB from the schematic changes nothing), and only where it agrees.
+    Where it doesn't (a pin wired differently, a net split in two), giving each pad its schematic net would turn a
+    correct board into one full of shorts; the pads keep their PCB net and the report lists the difference."""
+    node_k = {nd: name for name, nodes in kicad_nets.items() for nd in nodes}
+    votes: dict = defaultdict(lambda: defaultdict(int))  # schematic net -> EasyEDA net -> pads
+    for nd, en in pad_nets.items():
+        k = node_k.get(nd)
+        if en and k:
+            votes[k][en] += 1
+    final, taken = {}, set()
+    for en, k in sorted(cmp["rename"].items(), key=lambda kv: -votes[kv[1]][kv[0]]):
+        if k not in taken:  # one PCB net per schematic name: the one with most pads on it
+            final[en] = k
+            taken.add(k)
+    alone: dict = defaultdict(list)
+    for nd, en in pad_nets.items():
+        if en:
+            alone[en].append(nd)
+    for en in sorted({en for en in pad_nets.values() if en} - set(final)):
+        k = node_k.get(alone[en][0]) if len(alone[en]) == 1 else None
+        if k and k not in taken and len(kicad_nets[k]) == 1:
+            # a net of one pad whose pin is loose in the schematic (what is left of an older schematic): no
+            # connection either way, so it takes the schematic's name, with whatever copper hangs on it
+            final[en] = k
+            taken.add(k)
+            continue
+        name, n = en, 2
+        while name in taken:  # keeps its EasyEDA name, unless another net just got that one
+            name, n = f"{en}_{n}", n + 1
+        final[en] = name
+        taken.add(name)
+    pads = {}
+    for nd, en in pad_nets.items():
+        if en:
+            pads[nd] = final[en]
+        else:
+            # no net on the PCB yet (it wasn't updated from the schematic since that pin was wired): the schematic's
+            # net, as updating the PCB would give it.  Nothing is joined that isn't joined already: the pad has
+            # no copper net, and what is missing shows as an unrouted connection
+            pads[nd] = node_k.get(nd) or ""
+    return pads, final

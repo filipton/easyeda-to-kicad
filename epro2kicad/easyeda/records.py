@@ -332,6 +332,11 @@ def norm_v3(outer: dict, inner: dict, doc_type: str) -> Rec | None:
         d["origin"] = _V3_ALIGN_FIX.get(d["origin"], d["origin"])
     elif isinstance(d.get("origin"), (int, float)) and not isinstance(d.get("origin"), bool):
         d["origin"] = _V3_ORIGIN.get(int(d["origin"]), "LEFT_BOTTOM")
+    if "referX" in d and "referenceX" not in d:  # v3 names of an arc's point on the curve
+        d["referenceX"], d["referenceY"] = d.get("referX"), d.get("referY")
+    if t == "BEZIER" and "points" not in d and isinstance(d.get("controls"), list):
+        c = d["controls"]
+        d["points"] = [v for p in c for v in p] if c and isinstance(c[0], (list, tuple)) else c
     if "positionX" in d and "x" not in d:  # documented v3 names of text positions
         d["x"], d["y"] = d.get("positionX"), d.get("positionY")
     if "align" in d and isinstance(d["align"], str):
@@ -358,14 +363,22 @@ def flip_v3_sch_y(recs: list[Rec]) -> None:
 
 
 def assemble_v3_wires(recs: list[Rec]) -> list[Rec]:
-    """v3 stores a wire as a WIRE row plus LINE rows pointing at it via lineGroup."""
+    """v3 stores a wire as a WIRE row plus LINE rows pointing at it via lineGroup.
+
+    A LINE is never a drawing of its own: one whose WIRE/BUS row is gone is what EasyEDA
+    left behind of a deleted wire, and EasyEDA does not show it."""
     wires = {r.id: r for r in recs if r.type == "WIRE"}
+    groups = wires.keys() | {r.id for r in recs if r.type == "BUS"}
     out = []
     for r in recs:
-        if r.type == "LINE" and r.d.get("lineGroup") in wires:
-            w = wires[r.d["lineGroup"]]
-            w.d.setdefault("segments", []).append((r.num("startX"), r.num("startY"), r.num("endX"), r.num("endY")))
-            continue
+        if r.type == "LINE" and "lineGroup" in r.d:
+            w = wires.get(r.d["lineGroup"])
+            if w is not None:
+                w.d.setdefault("segments", []).append(
+                    (r.num("startX"), r.num("startY"), r.num("endX"), r.num("endY")))
+                continue
+            if r.d["lineGroup"] not in groups:
+                continue
         out.append(r)
     for w in wires.values():
         w.d.setdefault("segments", [])

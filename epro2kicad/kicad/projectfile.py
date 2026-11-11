@@ -35,6 +35,7 @@ def write_project(path: str, name: str, board=None, sheets: list | None = None, 
     if board is not None:
         ds = pro["board"]["design_settings"]
         ds["rules"].update(board.design_rules)
+        ds["rule_severities"].update(getattr(board, "severities", None) or {})
         if min_text_height is not None:
             ds["rules"]["min_text_height"] = min_text_height
         ds["track_widths"] = [0.0] + [w for w in board.track_widths if w > 0]
